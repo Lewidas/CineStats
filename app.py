@@ -1,24 +1,10 @@
-import os
-import re
-import io
-import zipfile
-import shutil
-import tempfile
-import json
+import os, io, re, json, tempfile
 from pathlib import Path
-from datetime import date
-
 import pandas as pd
 import streamlit as st
-import altair as alt
+import boto3
 
-# =================== DEPLOY NOTE (Streamlit Cloud) ===================
-# 1) Wgraj pliki: app.py + requirements.txt (+ runtime.txt) do GitHub.
-# 2) Streamlit Community Cloud → New app → wskaż repo/branch/app.py.
-# 3) (Opcjonalnie) hasło: Settings → Secrets dodaj: PASSWORD="TwojeHaslo".
-# 4) W chmurze korzystaj z trybu "Wgrywanie plików" (zakładka "Dane").
-# =====================================================================
-
+# =================== USTAWIENIA STRONY ===================
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 st.title("🎬 CineStats — sprzedaż i wskaźniki")
 
@@ -26,8 +12,7 @@ st.title("🎬 CineStats — sprzedaż i wskaźniki")
 if "PASSWORD" in st.secrets:
     if "AUTHED" not in st.session_state:
         pw = st.text_input("Hasło", type="password")
-        ok = st.button("Zaloguj")
-        if ok:
+        if st.button("Zaloguj"):
             if pw == st.secrets["PASSWORD"]:
                 st.session_state["AUTHED"] = True
                 st.rerun()
@@ -35,133 +20,20 @@ if "PASSWORD" in st.secrets:
                 st.error("Nieprawidłowe hasło.")
         st.stop()
 
-# ---------- Konfig lokalny ----------
-APP_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_DIR = APP_DIR / "Dane"
-CONFIG_PATH = APP_DIR / ".sprzedaz_config.json"
-
-def load_config() -> dict:
-    cfg = {"data_dir": str(DEFAULT_DATA_DIR)}
-    try:
-        if CONFIG_PATH.exists():
-            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
-    except Exception as e:
-        st.warning(f"Nie udało się wczytać konfiguracji: {e}")
-    return cfg
-
-def save_config(data_dir: Path) -> None:
-    try:
-        tmp = CONFIG_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"data_dir": str(data_dir)}, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, CONFIG_PATH)
-    except Exception as e:
-        st.warning(f"Nie udało się zapisać konfiguracji: {e}")
-
-# ---------- Pomocnicze: naprawa xlsx ----------
-def _sanitize_xml_text(text: str) -> str:
-    out = []
-    for ch in text:
-        cp = ord(ch)
-        if ch in ('\t', '\n', '\r') or (0x20 <= cp <= 0xD7FF) or (0xE000 <= cp <= 0xFFFD):
-            out.append(ch)
-    return "".join(out)
-
-def _patch_workbook_xml(content: str) -> str:
-    def repl(m):
-        prefix, val, suffix = m.group(1), m.group(2), m.group(3)
-        if val not in {"hidden", "visible", "veryHidden"}:
-            return f"{prefix}visible{suffix}"
-        return m.group(0)
-    return re.sub(r'(<sheet[^>]*\sstate=")([^"]+)(")', repl, content)
-
-def repair_xlsx_zip(src_path: Path) -> Path | None:
-    tmp_dir = None
-    try:
-        tmp_dir = Path(tempfile.mkdtemp(prefix="xlsxfix_"))
-        extract_dir = tmp_dir / "unzipped"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(src_path, "r") as z:
-            z.extractall(extract_dir)
-
-        wb_xml = extract_dir / "xl" / "workbook.xml"
-        if wb_xml.exists():
-            txt = wb_xml.read_text(encoding="utf-8", errors="ignore")
-            txt = _sanitize_xml_text(txt)
-            txt = _patch_workbook_xml(txt)
-            wb_xml.write_text(txt, encoding="utf-8")
-
-        for p in extract_dir.rglob("*.xml"):
-            try:
-                s = p.read_text(encoding="utf-8", errors="ignore")
-                cleaned = _sanitize_xml_text(s)
-                if cleaned != s:
-                    p.write_text(cleaned, encoding="utf-8")
-            except Exception:
-                pass
-
-        repaired = src_path.with_suffix(".repaired.xlsx")
-        with zipfile.ZipFile(repaired, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-            for root, _, files in os.walk(extract_dir):
-                for name in files:
-                    fp = Path(root) / name
-                    arcname = fp.relative_to(extract_dir)
-                    zout.write(fp, arcname.as_posix())
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return repaired
-    except Exception:
-        if tmp_dir:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-
-# ---------- Wczytywanie danych ----------
+# ---------- Pomocnicze ----------
 def _read_csv_any(path: Path) -> pd.DataFrame:
-    try:
-        return pd.read_csv(path, sep=None, engine="python")
-    except Exception:
-        return pd.read_csv(path)
+    try:    return pd.read_csv(path, sep=None, engine="python")
+    except: return pd.read_csv(path)
 
 def read_any_table(path: Path) -> pd.DataFrame:
     ext = path.suffix.lower()
-    if ext in [".csv", ".txt"]:
-        return _read_csv_any(path)
-    if ext in [".xlsx"]:
-        last_err = None
-        try:
-            return pd.read_excel(path, engine="openpyxl")
-        except Exception as e:
-            last_err = e
-        rep = repair_xlsx_zip(path)
-        if rep and rep.exists():
-            try:
-                return pd.read_excel(rep, engine="openpyxl")
-            except Exception as e:
-                last_err = e
-        raise RuntimeError(f"Nie udało się odczytać pliku {path.name}. Ostatni błąd: {last_err}")
-    if ext in [".xls"]:
-        raise RuntimeError("Format .xls nieobsługiwany w tej wersji online. Zapisz jako .xlsx lub .csv.")
-    raise ValueError(f"Nieobsługiwane rozszerzenie pliku: {ext}")
+    if ext in (".csv",".txt"):  return _read_csv_any(path)
+    if ext == ".xlsx":          return pd.read_excel(path, engine="openpyxl")
+    raise ValueError(f"Nieobsługiwane rozszerzenie: {ext}")
 
-def _dedup_repaired(paths: list[Path]) -> list[Path]:
-    bycanon, others = {}, []
-    for p in paths:
-        if p.suffix.lower() == ".xlsx" and (p.name.endswith(".repaired.xlsx") or p.name.endswith(".xlsx")):
-            canon = p.name[:-len(".repaired.xlsx")] + ".xlsx" if p.name.endswith(".repaired.xlsx") else p.name
-            bycanon.setdefault(canon, []).append(p)
-        else:
-            others.append(p)
-    out = []
-    for canon, plist in bycanon.items():
-        rep = [pp for pp in plist if pp.name.endswith(".repaired.xlsx")]
-        out.append(sorted(rep)[0] if rep else sorted(plist)[0])
-    out.extend(others)
-    return sorted(out)
-
-@st.cache_data(show_spinner=False)
-def _load_from_paths(files: list[Path]) -> pd.DataFrame:
-    if not files:
-        return pd.DataFrame()
+def _load_from_paths(paths: list[Path]) -> pd.DataFrame:
     frames, failures = [], []
-    for p in files:
+    for p in paths:
         try:
             df = read_any_table(p)
             df["__source_file"] = p.name
@@ -169,767 +41,442 @@ def _load_from_paths(files: list[Path]) -> pd.DataFrame:
         except Exception as e:
             failures.append((p.name, str(e)))
     if failures:
-        with st.expander("❗ Pliki z błędami (kliknij aby rozwinąć)"):
-            for name, err in failures:
-                st.error(f"{name} → {err}")
-    if not frames:
-        return pd.DataFrame()
-    data = pd.concat(frames, ignore_index=True)
-    data.columns = [str(c).strip() for c in data.columns]
-    if "Quantity" in data.columns:
-        data["Quantity"] = pd.to_numeric(data["Quantity"], errors="coerce").fillna(0)
-    if "NetAmount" in data.columns:
-        data["NetAmount"] = pd.to_numeric(data["NetAmount"], errors="coerce")
-    return data
+        with st.expander("❗ Pliki z błędami"):
+            for n, err in failures: st.error(f"{n} → {err}")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-@st.cache_data(show_spinner=False)
-def load_all_data_from_dir(data_dir: Path) -> pd.DataFrame:
-    files = []
-    for patt in ("*.xlsx", "*.csv", "*.txt"):
-        files.extend(sorted(data_dir.glob(patt)))
-    files = _dedup_repaired(files)
-    return _load_from_paths(files)
-
-def save_uploads_to_tmp(uploaded_files) -> list[Path]:
-    tmpdir = Path(tempfile.mkdtemp(prefix="uploads_"))
-    out = []
-    for uf in uploaded_files:
-        target = tmpdir / uf.name
-        with open(target, "wb") as f:
-            f.write(uf.read())
-        out.append(target)
-    return _dedup_repaired(out)
-
-# ---------- Data helpers ----------
-DATE_CANDIDATE_SUBSTRINGS = ["date", "czas", "data", "time"]
-
-def _first_valid_datetime_series(df: pd.DataFrame) -> pd.Series | None:
-    for col in df.columns:
-        lc = str(col).lower()
-        if any(tok in lc for tok in DATE_CANDIDATE_SUBSTRINGS):
-            ser = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-            if ser.notna().mean() > 0.5:
-                return ser
-    return None
-
-def _date_from_filename(name: str) -> date | None:
-    m = re.search(r"(\d{2})[._-](\d{2})[._-](\d{4})", name)
-    if m:
-        d, mth, y = map(int, m.groups())
-        try:
-            return date(y, mth, d)
-        except ValueError:
-            return None
-    return None
-
-def add__date_column(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    out = df.copy()
-    ser = _first_valid_datetime_series(out)
-    if ser is not None:
-        out["__date"] = ser.dt.date
-    else:
-        dates = []
-        for fname in out.get("__source_file", pd.Series(["unknown"] * len(out))):
-            dates.append(_date_from_filename(str(fname)))
-        out["__date"] = dates
-    return out
-
-# ---------- Normalizacja nazw produktów ----------
-import unicodedata
 def _norm_key(x):
-    if x is None:
-        return ""
-    s = str(x)
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = "" if x is None else str(x)
     s = s.lower()
-    s = "".join(ch for ch in s if ch.isalnum())
-    return s
+    # uproszczona normalizacja (bez znaków diakrytycznych)
+    return "".join(ch for ch in s if ch.isalnum())
 
-# ---------- Wspólne maski/produkty ----------
-FLAVORED_LIST = ["BEKON-SER", "BEKON-SER/SOL", "CHEDDAR/SOL", "KARMEL.", "KARMEL/BEKON.", "KARMEL/CHEDDAR.", "KARMEL/SOL.", "SER-CHEDDAR"]
-FLAVORED_NORM = set(_norm_key(x) for x in FLAVORED_LIST)
-BASE_POP_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l", "KubekPopcorn6,5l"]
-BASE_POP_NORM = set(_norm_key(x) for x in BASE_POP_LIST)
-SHARE_NUM_LIST = ["KubekPopcorn6,5l"]
-SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l"]
-SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
-SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
+# ---------- Integracja S3/R2 ----------
+def _s3_connect():
+    bucket   = st.secrets.get("S3_BUCKET", "cine-stats")
+    region   = st.secrets.get("S3_REGION", "eu-central-1")
+    endpoint = st.secrets.get("S3_ENDPOINT_URL") or None
+    ak = st.secrets.get("AWS_ACCESS_KEY_ID")
+    sk = st.secrets.get("AWS_SECRET_ACCESS_KEY")
+    if not ak or not sk:
+        raise RuntimeError("Brak AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY w Secrets.")
+    cli = boto3.client("s3", region_name=region, aws_access_key_id=ak, aws_secret_access_key=sk, endpoint_url=endpoint)
+    base_prefix = st.secrets.get("S3_PREFIX", "Raporty/")
+    return cli, bucket, base_prefix
+
+def s3_list_datasets(prefix_extra=""):
+    s3, bucket, base = _s3_connect()
+    pref = (base + (prefix_extra or "")).lstrip("/")
+    keys, token = [], None
+    while True:
+        kw = {"Bucket": bucket, "Prefix": pref}
+        if token: kw["ContinuationToken"] = token
+        resp = s3.list_objects_v2(**kw)
+        for it in resp.get("Contents", []):
+            k = it["Key"].lower()
+            if k.endswith((".xlsx",".csv",".txt")): keys.append(it["Key"])
+        if resp.get("IsTruncated"): token = resp.get("NextContinuationToken")
+        else: break
+    return sorted(keys)
+
+def s3_read_df(key: str) -> pd.DataFrame:
+    s3, bucket, _ = _s3_connect()
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    data = obj["Body"].read()
+    ext = os.path.splitext(key)[1].lower()
+    if ext in (".csv",".txt"):
+        try:    return pd.read_csv(io.BytesIO(data), sep=None, engine="python")
+        except: return pd.read_csv(io.BytesIO(data))
+    if ext == ".xlsx":
+        tmp = Path(tempfile.mkdtemp()) / os.path.basename(key)
+        tmp.write_bytes(data)
+        return pd.read_excel(tmp, engine="openpyxl")
+    raise ValueError(f"Nieobsługiwane rozszerzenie: {ext}")
+
+def load_from_s3(prefix_extra=""):
+    frames, fails = [], []
+    for k in s3_list_datasets(prefix_extra):
+        try:
+            df = s3_read_df(k)
+            df["__source_file"] = k.split("/")[-1]
+            frames.append(df)
+        except Exception as e:
+            fails.append((k, str(e)))
+    if fails:
+        with st.expander("❗ Pliki z błędami w S3"):
+            for k, err in fails: st.error(f"{k} → {err}")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 # =============== TABS (podstrony) ===============
 tab_dane, tab_pivot, tab_indy, tab_best, tab_comp = st.tabs(
-    ["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów"]
+    ["🗂️ Dane", "📈 Tabela wskaźników", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów"]
 )
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
     st.subheader("🗂️ Ustawienia źródła danych")
-    data_mode = st.radio("Źródło danych", ["Wgrywanie plików", "Folder lokalny"], horizontal=True, index=0)
+    mode = st.radio("Źródło danych", ["Chmura (S3/R2)", "Wgrywanie plików"], horizontal=True)
 
-    if data_mode == "Wgrywanie plików":
-        uploaded = st.file_uploader("Wrzuć pliki (.xlsx/.csv/.txt)", type=["xlsx","csv","txt"], accept_multiple_files=True)
-        if st.button("🔄 Wczytaj/odśwież dane", type="primary"):
-            if not uploaded:
-                st.warning("Dodaj przynajmniej jeden plik.")
-            else:
-                paths = save_uploads_to_tmp(uploaded)
-                with st.spinner("Wczytywanie danych..."):
-                    st.session_state["cached_df"] = _load_from_paths(paths)
-        st.info("W chmurze (Streamlit Cloud) to tryb zalecany.")
+    if mode == "Chmura (S3/R2)":
+        pref = st.text_input("Prefiks w buckecie (opcjonalnie)", value=st.secrets.get("S3_PREFIX", "Raporty/"))
+        if st.button("🔄 Wczytaj z S3/R2", type="primary"):
+            try:
+                with st.spinner("Łączenie i pobieranie..."):
+                    st.session_state["df"] = load_from_s3(prefix_extra=pref)
+                st.success("Dane zaczytane z S3.")
+            except Exception as ex:
+                st.error(f"Nie udało się połączyć z S3/R2: {ex}")
+        st.info("Raporty trzymaj w buckecie pod zadanym prefiksem (np. Raporty/2025-09/…).")
 
     else:
-        _cfg = load_config()
-        data_dir_str = st.text_input("📁 Folder z danymi (lokalnie)", value=_cfg.get("data_dir", str(DEFAULT_DATA_DIR)))
-        data_dir = Path(data_dir_str)
-        if st.button("🔄 Wczytaj/odśwież dane", type="primary", key="reload_local"):
-            save_config(data_dir=data_dir)
-            with st.spinner("Wczytywanie danych..."):
-                st.session_state["cached_df"] = load_all_data_from_dir(data_dir)
+        uploaded = st.file_uploader("Wrzuć pliki (.xlsx/.csv/.txt)", type=["xlsx","csv","txt"], accept_multiple_files=True)
+        if st.button("🔄 Wczytaj/odśwież", type="primary"):
+            if not uploaded:
+                st.warning("Dodaj pliki.")
+            else:
+                tmpdir = Path(tempfile.mkdtemp(prefix="uploads_"))
+                paths = []
+                for uf in uploaded:
+                    p = tmpdir / uf.name
+                    p.write_bytes(uf.read())
+                    paths.append(p)
+                with st.spinner("Wczytywanie..."):
+                    st.session_state["df"] = _load_from_paths(paths)
 
-    df = st.session_state.get("cached_df", pd.DataFrame())
+    df = st.session_state.get("df", pd.DataFrame())
     if df.empty:
         st.info("Brak danych w pamięci. Wybierz tryb i wczytaj pliki.")
     else:
         st.success(f"Wczytano {len(df):,} wierszy.".replace(",", " "))
         st.dataframe(df.head(300), use_container_width=True)
 
-def ensure_data_or_stop():
-    df = st.session_state.get("cached_df", pd.DataFrame())
+def ensure_data_or_stop() -> pd.DataFrame:
+    df = st.session_state.get("df", pd.DataFrame())
     if df.empty:
-        st.warning("Brak danych. Przejdź do zakładki **Dane** i wczytaj pliki.")
+        st.warning("Brak danych. Najpierw wczytaj pliki w zakładce **Dane**.")
         st.stop()
     return df
 
-# ---------- Zakładka: Tabela przestawna ----------
+# ---------- Wspólne definicje ----------
+FLAVORED_NORM = { _norm_key(x) for x in ["BEKON-SER","BEKON-SER/SOL","CHEDDAR/SOL","KARMEL.","KARMEL/BEKON.","KARMEL/CHEDDAR.","KARMEL/SOL.","SER-CHEDDAR"] }
+BASE_POP_NORM  = { _norm_key(x) for x in ["KubekPopcorn1,5l","KubekPopcorn2,3l","KubekPopcorn4,2l","KubekPopcorn5,2l","KubekPopcorn6,5l"] }
+SHARE_NUM_NORM = { _norm_key("KubekPopcorn6,5l") }
+SHARE_DEN_NORM = BASE_POP_NORM - SHARE_NUM_NORM
+
+# ---------- Zakładka: Tabela wskaźników ----------
 with tab_pivot:
     st.subheader("📈 Tabela wskaźników")
     df = ensure_data_or_stop()
-    df = add__date_column(df)
-
-    # Zakres dat
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="pivot_date")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask_d].copy()
-    else:
-        dff = df.copy()
-
-    required = {"UserFullName", "ProductName", "Quantity"}
-    if not required.issubset(dff.columns):
+    need = {"UserFullName","ProductName","Quantity"}
+    if not need.issubset(df.columns):
         st.error("Brak wymaganych kolumn: UserFullName, ProductName, Quantity.")
         st.stop()
 
-    dff["__pnorm"] = dff["ProductName"].map(_norm_key)
-    users_sorted = sorted(dff["UserFullName"].dropna().unique())
+    df = df.copy()
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
+    if "NetAmount" in df.columns:
+        df["NetAmount"] = pd.to_numeric(df["NetAmount"], errors="coerce")
+    df["__pnorm"] = df["ProductName"].map(_norm_key)
 
-    # % Extra Sos
-    mask_extra = dff["__pnorm"] == "extranachossauce"
-    mask_base = dff["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
-    extra_by_user = dff.loc[mask_extra].groupby("UserFullName")["Quantity"].sum()
-    base_by_user = dff.loc[mask_base].groupby("UserFullName")["Quantity"].sum()
-    extra = extra_by_user.reindex(users_sorted, fill_value=0)
-    base = base_by_user.reindex(users_sorted, fill_value=0)
-    pct_extra = (extra / base.replace(0, pd.NA) * 100).astype("Float64").round(1)
+    users = sorted(df["UserFullName"].dropna().unique())
+
+    # % Extra Sos (licznik: Extra Nachos Sauce; mianownik: Tacka Nachos Średnia/Duża)
+    mask_extra = df["__pnorm"].eq("extranachossauce")
+    mask_base  = df["__pnorm"].isin({"tackanachossrednia","tackanachosduza"})
+    extra_by_u = df.loc[mask_extra].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    base_by_u  = df.loc[mask_base ].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct_extra  = (extra_by_u / base_by_u.replace(0, pd.NA) * 100).astype("Float64").round(1)
 
     # % Popcorny smakowe
-    mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
-    mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
-    flavored_qty = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    base_pop_qty = dff.loc[mask_base_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    pct_popcorny = (flavored_qty / base_pop_qty.replace(0, pd.NA) * 100).astype("Float64").round(1)
+    mask_flav = df["__pnorm"].isin(FLAVORED_NORM)
+    mask_basep= df["__pnorm"].isin(BASE_POP_NORM)
+    flav_by_u = df.loc[mask_flav].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    basep_by_u= df.loc[mask_basep].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct_pop   = (flav_by_u / basep_by_u.replace(0, pd.NA) * 100).astype("Float64").round(1)
 
     # % ShareCorn
-    mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
-    mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
-    share_num_qty = dff.loc[mask_share_num].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    share_den_qty = dff.loc[mask_share_den].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    pct_sharecorn = (share_num_qty / share_den_qty.replace(0, pd.NA) * 100).astype("Float64").round(1)
+    share_num = df["__pnorm"].isin(SHARE_NUM_NORM)
+    share_den = df["__pnorm"].isin(SHARE_DEN_NORM)
+    num_by_u  = df.loc[share_num].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    den_by_u  = df.loc[share_den].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct_share = (num_by_u / den_by_u.replace(0, pd.NA) * 100).astype("Float64").round(1)
 
-    # POS wykluczenia
-    tx_df = dff.copy()
+    # Transakcje + średnia wartość transakcji (z wykluczeniem POS Bonarka CAF1/VIP1)
+    tx_df = df.copy()
     if "PosName" in tx_df.columns:
         m_ex = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
         tx_df = tx_df.loc[~m_ex].copy()
 
-    # Liczba transakcji i średnia wartość transakcji
     if "TransactionId" in tx_df.columns:
-        tx_count = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype("Int64")
+        tx_count = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users, fill_value=0).astype("Int64")
     else:
-        tx_count = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
+        tx_count = pd.Series([pd.NA]*len(users), index=users, dtype="Int64")
 
-    if ("TransactionId" in tx_df.columns) and ("NetAmount" in tx_df.columns):
-        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
-        nun = grp.nunique(dropna=True)
-        s = grp.sum(min_count=1)
-        f = grp.first()
-        per_tx_total = f.where(nun <= 1, s)
-        revenue = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted).astype("Float64")
-        avg_value = (revenue / tx_count.astype("Float64").replace(0, pd.NA)).astype("Float64").round(2)
+    if {"TransactionId","NetAmount"}.issubset(tx_df.columns):
+        grp = tx_df.groupby(["UserFullName","TransactionId"])["NetAmount"]
+        nun, s, f = grp.nunique(dropna=True), grp.sum(min_count=1), grp.first()
+        per_tx   = f.where(nun <= 1, s)
+        revenue  = per_tx.groupby("UserFullName").sum(min_count=1).reindex(users).astype("Float64")
+        avg_val  = (revenue / tx_count.astype("Float64").replace(0, pd.NA)).astype("Float64").round(2)
     else:
-        avg_value = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64")
+        avg_val = pd.Series([pd.NA]*len(users), index=users, dtype="Float64")
 
-    # Finalna tabela
-    result = pd.DataFrame(index=users_sorted)
-    result["Liczba transakcji"] = tx_count
-    result["Średnia wartość transakcji"] = avg_value
-    result["% Extra Sos"] = pct_extra
-    result["% Popcorny smakowe"] = pct_popcorny
-    result["% ShareCorn"] = pct_sharecorn
-    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-    result = result[order]
-    result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
+    table = pd.DataFrame(index=users)
+    table["Liczba transakcji"] = tx_count
+    table["Średnia wartość transakcji"] = avg_val
+    table["% Extra Sos"] = pct_extra
+    table["% Popcorny smakowe"] = pct_pop
+    table["% ShareCorn"] = pct_share
+    table = table.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
 
-    # Średnia kina
+    st.dataframe(table, use_container_width=True)
+
+    # Eksport XLSX
     try:
-        pct_extra_c = float(dff.loc[mask_extra, "Quantity"].sum()) / float(dff.loc[mask_base, "Quantity"].sum()) * 100 if dff.loc[mask_base, "Quantity"].sum() else None
-        pct_pop_c = float(dff.loc[mask_flavored_pop, "Quantity"].sum()) / float(dff.loc[mask_base_pop, "Quantity"].sum()) * 100 if dff.loc[mask_base_pop, "Quantity"].sum() else None
-        den_sum = float(dff.loc[mask_share_den, "Quantity"].sum())
-        num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
-        pct_share_c = num_sum / den_sum * 100 if den_sum else None
-
-        if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
-            grp_all = tx_df.groupby("TransactionId")["NetAmount"]
-            nun_all = grp_all.nunique(dropna=True)
-            s_all = grp_all.sum(min_count=1)
-            f_all = grp_all.first()
-            per_tx_all = f_all.where(nun_all <= 1, s_all)
-            avg_c = float(per_tx_all.sum(min_count=1)) / int(tx_df["TransactionId"].nunique()) if int(tx_df["TransactionId"].nunique()) else None
-        else:
-            avg_c = None
-
-        summary_row = pd.DataFrame({
-            "Liczba transakcji": [int(tx_df["TransactionId"].nunique()) if "TransactionId" in tx_df.columns else None],
-            "Średnia wartość transakcji": [None if avg_c is None else round(avg_c, 2)],
-            "% Extra Sos": [None if pct_extra_c is None else round(pct_extra_c, 1)],
-            "% Popcorny smakowe": [None if pct_pop_c is None else round(pct_pop_c, 1)],
-            "% ShareCorn": [None if pct_share_c is None else round(pct_share_c, 1)],
-        }, index=["Średnia kina"])
-        final_df = pd.concat([summary_row, result_sorted], axis=0)
-    except Exception:
-        final_df = result_sorted
-
-    # Styl + eksport
-    def _fmt_pct(x):
-        return "" if pd.isna(x) else f"{x:.1f} %"
-    def _fmt_pln(x):
-        return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-    def _bold_and_shade(row):
-        return ['font-weight:700; background-color:#f3f4f6' for _ in row] if row.name == "Średnia kina" else ['' for _ in row]
-
-    styled = final_df.style.format({
-        "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct,
-        "Średnia wartość transakcji": _fmt_pln
-    }).apply(_bold_and_shade, axis=1)
-    st.dataframe(styled, use_container_width=True)
-
-    try:
-        buffer = io.BytesIO()
-        out_df = final_df.copy()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            out_df.to_excel(writer, index=True, sheet_name="Wskaźniki")
-            wb = writer.book; ws = writer.sheets["Wskaźniki"]
-            fmt_bold = wb.add_format({"bold": True})
-            fmt_pct = wb.add_format({"num_format": "0.0 %"})
-            fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
-            fmt_int = wb.add_format({"num_format": "0"})
-            col_names = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-            for j, name in enumerate(col_names, start=1):
-                width = 22 if name != "Liczba transakcji" else 18
-                if name == "Liczba transakcji":
-                    ws.set_column(j, j, width, fmt_int)
-                elif name == "Średnia wartość transakcji":
-                    ws.set_column(j, j, width, fmt_pln)
-                else:
-                    ws.set_column(j, j, width, fmt_pct)
-            ws.set_row(0, None, fmt_bold)
-        st.download_button("⬇️ Pobierz XLSX (tabela przestawna)", data=buffer.getvalue(),
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+            table.to_excel(w, sheet_name="Wskaźniki")
+        st.download_button("⬇️ Pobierz XLSX (Wskaźniki)", data=buf.getvalue(),
                            file_name="Wskazniki.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as ex:
         st.warning(f"Nie udało się przygotować XLSX: {ex}")
 
-    with st.expander("🎯 Szybkie zapytanie: zleceniobiorca + produkt", expanded=False):
-        users = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-        prods = sorted(dff.get("ProductName", pd.Series(dtype=str)).dropna().unique())
-        left, right = st.columns(2)
-        with left:
-            sel_user_simple = st.selectbox("Zleceniobiorca", options=users, index=0 if users else None, placeholder="Wybierz osobę...")
-        with right:
-            sel_prod_simple = st.selectbox("Produkt", options=prods, index=0 if prods else None, placeholder="Wybierz produkt...")
-        if st.button("Pokaż", type="secondary"):
-            subset2 = dff[(dff["UserFullName"] == sel_user_simple) & (dff["ProductName"] == sel_prod_simple)]
-            total_qty2 = float(subset2["Quantity"].sum()) if not subset2.empty else 0.0
-            st.metric(label="Suma sprzedanych sztuk (po filtrach daty)", value=f"{total_qty2:,.0f}".replace(",", " "))
-
 # ---------- Zakładka: Wyniki indywidualne ----------
 with tab_indy:
     st.subheader("👤 Wyniki indywidualne")
-    df = ensure_data_or_stop()
-    df = add__date_column(df)
+    df = ensure_data_or_stop().copy()
+    need = {"UserFullName","ProductName","Quantity"}
+    if not need.issubset(df.columns):
+        st.error("Wymagane kolumny: UserFullName, ProductName, Quantity"); st.stop()
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
+    if "NetAmount" in df.columns:
+        df["NetAmount"] = pd.to_numeric(df["NetAmount"], errors="coerce")
+    df["__pnorm"] = df["ProductName"].map(_norm_key)
 
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        cols = st.columns([1,1,2])
-        with cols[0]:
-            picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="indy_date")
-        with cols[1]:
-            users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-            sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
+    users_all = sorted(df["UserFullName"].dropna().unique())
+    user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None)
+
+    # maski jak wyżej
+    mask_extra = df["__pnorm"].eq("extranachossauce")
+    mask_base  = df["__pnorm"].isin({"tackanachossrednia","tackanachosduza"})
+    mask_flav  = df["__pnorm"].isin(FLAVORED_NORM)
+    mask_basep = df["__pnorm"].isin(BASE_POP_NORM)
+    mask_sn    = df["__pnorm"].isin(SHARE_NUM_NORM)
+    mask_sd    = df["__pnorm"].isin(SHARE_DEN_NORM)
+
+    # kino
+    def _pct(num_mask, den_mask, frame):
+        num = float(frame.loc[num_mask, "Quantity"].sum())
+        den = float(frame.loc[den_mask, "Quantity"].sum())
+        return None if den == 0 else round(num/den*100, 1)
+
+    df_tx = df.copy()
+    if "PosName" in df_tx.columns:
+        ex = df_tx["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+        df_tx = df_tx.loc[~ex].copy()
+
+    if {"TransactionId","NetAmount"}.issubset(df_tx.columns):
+        g = df_tx.groupby("TransactionId")["NetAmount"]
+        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+        avg_cinema = None if df_tx["TransactionId"].nunique()==0 else round(float(per_tx.sum(min_count=1))/int(df_tx["TransactionId"].nunique()), 2)
     else:
-        st.warning("Brak dat — używam wszystkich wierszy.")
-        dff = df.copy()
-        users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-        sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user_nodate")
+        avg_cinema = None
 
-    dff["__pnorm"] = dff["ProductName"].map(_norm_key)
-    mask_extra = dff["__pnorm"] == "extranachossauce"
-    mask_base = dff["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
-    mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
-    mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
-    mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
-    mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
+    row_cinema = {
+        "Średnia wartość transakcji": avg_cinema,
+        "% Extra Sos": _pct(mask_extra, mask_base, df),
+        "% Popcorny smakowe": _pct(mask_flav, mask_basep, df),
+        "% ShareCorn": _pct(mask_sn, mask_sd, df),
+    }
 
-    # KINO
-    try:
-        base_sum = float(dff.loc[mask_base, "Quantity"].sum())
-        extra_sum = float(dff.loc[mask_extra, "Quantity"].sum())
-        pct_extra_cinema = (extra_sum / base_sum * 100) if base_sum else None
+    # osoba
+    d_u = df[df["UserFullName"] == user]
+    dfu_tx = d_u.copy()
+    if "PosName" in dfu_tx.columns:
+        exu = dfu_tx["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+        dfu_tx = dfu_tx.loc[~exu].copy()
 
-        pop_base_sum = float(dff.loc[mask_base_pop, "Quantity"].sum())
-        pop_flav_sum = float(dff.loc[mask_flavored_pop, "Quantity"].sum())
-        pct_popcorny_cinema = (pop_flav_sum / pop_base_sum * 100) if pop_base_sum else None
+    if {"TransactionId","NetAmount"}.issubset(dfu_tx.columns):
+        g = dfu_tx.groupby("TransactionId")["NetAmount"]
+        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+        txc = int(dfu_tx["TransactionId"].nunique())
+        avg_user = None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
+    else:
+        avg_user, txc = None, None
 
-        share_den_sum = float(dff.loc[mask_share_den, "Quantity"].sum())
-        share_num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
-        pct_sharecorn_cinema = (share_num_sum / share_den_sum * 100) if share_den_sum else None
+    row_user = {
+        "Średnia wartość transakcji": avg_user,
+        "% Extra Sos": _pct(d_u["__pnorm"].eq("extranachossauce"), d_u["__pnorm"].isin({"tackanachossrednia","tackanachosduza"}), d_u),
+        "% Popcorny smakowe": _pct(d_u["__pnorm"].isin(FLAVORED_NORM), d_u["__pnorm"].isin(BASE_POP_NORM), d_u),
+        "% ShareCorn": _pct(d_u["__pnorm"].isin(SHARE_NUM_NORM), d_u["__pnorm"].isin(SHARE_DEN_NORM), d_u),
+    }
 
-        tx_df_all = dff.copy()
-        if "PosName" in tx_df_all.columns:
-            m_ex = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_all = tx_df_all.loc[~m_ex].copy()
-        if ("TransactionId" in tx_df_all.columns) and ("NetAmount" in tx_df_all.columns):
-            grp_all = tx_df_all.groupby("TransactionId")["NetAmount"]
-            nun_all = grp_all.nunique(dropna=True)
-            s_all = grp_all.sum(min_count=1)
-            f_all = grp_all.first()
-            per_tx_total_all = f_all.where(nun_all <= 1, s_all)
-            global_tx_count = int(tx_df_all["TransactionId"].nunique())
-            global_revenue = float(per_tx_total_all.sum(min_count=1))
-            avg_tr_cinema = (global_revenue / global_tx_count) if global_tx_count else None
-        else:
-            avg_tr_cinema = None
-    except Exception:
-        pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = avg_tr_cinema = None
-
-    # OSOBA
-    dff_u = dff[dff["UserFullName"] == sel_user].copy()
-    try:
-        base_u = float(dff_u.loc[mask_base, "Quantity"].sum())
-        extra_u = float(dff_u.loc[mask_extra, "Quantity"].sum())
-        pct_extra_u = (extra_u / base_u * 100) if base_u else None
-
-        pop_base_u = float(dff_u.loc[mask_base_pop, "Quantity"].sum())
-        pop_flav_u = float(dff_u.loc[mask_flavored_pop, "Quantity"].sum())
-        pct_popcorny_u = (pop_flav_u / pop_base_u * 100) if pop_base_u else None
-
-        share_den_u = float(dff_u.loc[mask_share_den, "Quantity"].sum())
-        share_num_u = float(dff_u.loc[mask_share_num, "Quantity"].sum())
-        pct_sharecorn_u = (share_num_u / share_den_u * 100) if share_den_u else None
-
-        tx_df_u = dff_u.copy()
-        if "PosName" in tx_df_u.columns:
-            m_ex_u = tx_df_u["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_u = tx_df_u.loc[~m_ex_u].copy()
-        if ("TransactionId" in tx_df_u.columns) and ("NetAmount" in tx_df_u.columns):
-            grp_u = tx_df_u.groupby("TransactionId")["NetAmount"]
-            nun_u = grp_u.nunique(dropna=True)
-            s_u = grp_u.sum(min_count=1)
-            f_u = grp_u.first()
-            per_tx_total_u = f_u.where(nun_u <= 1, s_u)
-            tx_count_u = int(tx_df_u["TransactionId"].nunique())
-            revenue_u = float(per_tx_total_u.sum(min_count=1))
-            avg_tr_u = (revenue_u / tx_count_u) if tx_count_u else None
-        else:
-            avg_tr_u = None; tx_count_u = None
-    except Exception:
-        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = avg_tr_u = None; tx_count_u = None
-
-    def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
-    def _fmt_pln(x): return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-    def _fmt_diff_pp(u, c):
-        if u is None or c is None: return ""
-        d = u - c; s = "+" if d>=0 else "−"; return f"{s}{abs(d):.1f} p.p."
-    def _fmt_diff_pln(u, c):
-        if u is None or c is None: return ""
-        d = u - c; s = "+" if d>=0 else "−"; v = f"{abs(d):,.2f}".replace(",", " ").replace(".", ","); return f"{s}{v} zł"
-
-    rows = [
-        ["Średnia wartość transakcji", avg_tr_u, avg_tr_cinema, _fmt_diff_pln(avg_tr_u, avg_tr_cinema)],
-        ["% Extra Sos", pct_extra_u, pct_extra_cinema, _fmt_diff_pp(pct_extra_u, pct_extra_cinema)],
-        ["% Popcorny smakowe", pct_popcorny_u, pct_popcorny_cinema, _fmt_diff_pp(pct_popcorny_u, pct_popcorny_cinema)],
-        ["% ShareCorn", pct_sharecorn_u, pct_sharecorn_cinema, _fmt_diff_pp(pct_sharecorn_u, pct_sharecorn_cinema)],
-    ]
-    df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
-
-    st.markdown("#### Zestawienie")
-    tx_label = "-" if tx_count_u is None else f"{tx_count_u:,}".replace(",", " ")
-    st.metric("Liczba transakcji (osoba)", tx_label)
-    disp = df_view.copy()
-    disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]] = disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]].applymap(_fmt_pln)
-    mask_pct = disp["Wskaźnik"] != "Średnia wartość transakcji"
-    disp.loc[mask_pct, [sel_user, "Średnia kina"]] = disp.loc[mask_pct, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
+    disp = pd.DataFrame({
+        "Wskaźnik": ["Średnia wartość transakcji","% Extra Sos","% Popcorny smakowe","% ShareCorn"],
+        user: [row_user[k] for k in ["Średnia wartość transakcji","% Extra Sos","% Popcorny smakowe","% ShareCorn"]],
+        "Średnia kina": [row_cinema[k] for k in ["Średnia wartość transakcji","% Extra Sos","% Popcorny smakowe","% ShareCorn"]],
+    })
+    st.metric("Liczba transakcji (osoba)", "-" if txc is None else f"{txc:,}".replace(",", " "))
     st.dataframe(disp, use_container_width=True, hide_index=True)
-
-    # Wykresy
-    st.markdown("### 📊 Wykresy porównawcze")
-    _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
-
-    # Pieniądze
-    val_user = avg_tr_u if avg_tr_u is not None else 0.0
-    val_kino = avg_tr_cinema if avg_tr_cinema is not None else 0.0
-    _color_user = _gray
-    if avg_tr_u is not None and avg_tr_cinema is not None:
-        _color_user = _green if avg_tr_u >= avg_tr_cinema else _red
-    _diff_money = ""
-    if avg_tr_u is not None and avg_tr_cinema is not None:
-        d = avg_tr_u - avg_tr_cinema
-        s = "+" if d >= 0 else "−"
-        _diff_money = s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
-    df_chart_money = pd.DataFrame([
-        {"Kto": sel_user, "Wartość": val_user, "kolor": _color_user, "label": _diff_money, "label_color": _color_user},
-        {"Kto": "Średnia kina", "Wartość": val_kino, "kolor": _gray, "label": "", "label_color": _gray},
-    ])
-    base_money = alt.Chart(df_chart_money)
-    bars_money = base_money.mark_bar(size=28).encode(
-        x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-        y=alt.Y("Wartość:Q", title="zł"),
-        color=alt.Color("kolor:N", legend=None, scale=None),
-        tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=",.2f")]
-    )
-    labels_money = base_money.mark_text(dy=-6, size=18).encode(
-        x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-        y=alt.Y("Wartość:Q"),
-        text=alt.Text("label:N"),
-        color=alt.Color("label_color:N", legend=None, scale=None)
-    )
-    ref_df = pd.DataFrame({"ref":[val_kino]})
-    rule_money = alt.Chart(ref_df).mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="ref:Q")
-    chart_money = (bars_money + labels_money + rule_money).properties(width=780, height=450)
-    st.altair_chart(chart_money, use_container_width=False)
-
-    # Wskaźniki % (facet)
-    st.caption("Wskaźniki procentowe")
-    metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-    user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
-    cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
-    rows = []
-    for m, u, c in zip(metrics, user_vals, cinema_vals):
-        uval = 0.0 if u is None else u
-        cval = 0.0 if c is None else c
-        ucol = _gray if (u is None or c is None) else (_green if uval >= cval else _red)
-        label = ""
-        if u is not None and c is not None:
-            d = uval - cval
-            s = "+" if d >= 0 else "−"
-            label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-        rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol})
-        rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray})
-    df_chart_pct = pd.DataFrame(rows)
-    base_pct = alt.Chart(df_chart_pct)
-    bars_pct = base_pct.mark_bar(size=28).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q", title="%"),
-        color=alt.Color("kolor:N", legend=None, scale=None),
-        tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-    )
-    labels_pct = base_pct.mark_text(dy=-6, size=16).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q"),
-        text=alt.Text("diff_label:N"),
-        color=alt.Color("label_color:N", legend=None, scale=None)
-    )
-    rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="Wartość:Q")
-    chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
-    st.altair_chart(chart_pct, use_container_width=True)
 
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
-    st.subheader("🏆 Najlepsi — ranking wg wskaźników")
-    df = ensure_data_or_stop()
-    df = add__date_column(df)
-
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="best_date")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-    else:
-        dff = df.copy()
-
-    required = {"UserFullName", "ProductName", "Quantity"}
-    if not required.issubset(dff.columns):
-        st.error("Brak wymaganych kolumn: UserFullName, ProductName, Quantity.")
-        st.stop()
-
-    dff["__pnorm"] = dff["ProductName"].map(_norm_key)
-    users_sorted = sorted(dff["UserFullName"].dropna().unique())
-    mask_extra = dff["__pnorm"] == "extranachossauce"
-    mask_base = dff["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
-    mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
-    mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
-    mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
-    mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
-
-    def style_over_avg(df_in: pd.DataFrame, avg_val: float, is_pct: bool) -> pd.io.formats.style.Styler:
-        def _fmt_pct(x): return "" if pd.isna(x) else f"{x:.1f} %"
-        def _fmt_pln(x):
-            if pd.isna(x): return ""
-            s = f"{x:,.2f}".replace(",", " ").replace(".", ","); return s + " zł"
-        def _color(v):
-            try:
-                return "background-color: #dcfce7; font-weight: 600" if (not pd.isna(v) and not pd.isna(avg_val) and v >= avg_val) else ""
-            except Exception:
-                return ""
-        sty = df_in.style.applymap(_color, subset=["Wartość"])
-        return sty.format({"Wartość": _fmt_pct if is_pct else _fmt_pln})
+    st.subheader("🏆 Najlepsi — ranking")
+    df = ensure_data_or_stop().copy()
+    need = {"UserFullName","ProductName","Quantity"}
+    if not need.issubset(df.columns):
+        st.error("Wymagane kolumny: UserFullName, ProductName, Quantity"); st.stop()
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
+    if "NetAmount" in df.columns:
+        df["NetAmount"] = pd.to_numeric(df["NetAmount"], errors="coerce")
+    df["__pnorm"] = df["ProductName"].map(_norm_key)
+    users = sorted(df["UserFullName"].dropna().unique())
 
     # % Extra Sos
-    extra = dff.loc[mask_extra].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    base = dff.loc[mask_base].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    tbl_extra = (extra / base.replace(0, pd.NA) * 100).astype("Float64")
-    avg_extra = (float(dff.loc[mask_extra, "Quantity"].sum()) / float(dff.loc[mask_base, "Quantity"].sum()) * 100) if dff.loc[mask_base, "Quantity"].sum() else None
-    df_extra = pd.DataFrame({"Wartość": tbl_extra}).sort_values("Wartość", ascending=False, na_position="last")
-    st.markdown("#### % Extra Sos")
-    if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
-    st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True)
+    mask_extra = df["__pnorm"].eq("extranachossauce")
+    mask_base  = df["__pnorm"].isin({"tackanachossrednia","tackanachosduza"})
+    extra = df.loc[mask_extra].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    base  = df.loc[mask_base ].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct   = (extra / base.replace(0, pd.NA) * 100).astype("Float64")
+    avg_c = None if float(base.sum())==0 else round(float(extra.sum())/float(base.sum())*100,1)
+    st.markdown("#### % Extra Sos" + ("" if avg_c is None else f"  |  Średnia kina: **{avg_c:.1f} %**"))
+    st.dataframe(pd.DataFrame({"Wartość": pct}).sort_values("Wartość", ascending=False, na_position="last"),
+                 use_container_width=True)
 
     # % Popcorny smakowe
-    flavored = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    base_pop = dff.loc[mask_base_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    tbl_pop = (flavored / base_pop.replace(0, pd.NA) * 100).astype("Float64")
-    avg_pop = (float(dff.loc[mask_flavored_pop, "Quantity"].sum()) / float(dff.loc[mask_base_pop, "Quantity"].sum()) * 100) if dff.loc[mask_base_pop, "Quantity"].sum() else None
-    df_pop = pd.DataFrame({"Wartość": tbl_pop}).sort_values("Wartość", ascending=False, na_position="last")
-    st.markdown("#### % Popcorny smakowe")
-    if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
-    st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True)
+    mask_flav = df["__pnorm"].isin(FLAVORED_NORM)
+    mask_basep= df["__pnorm"].isin(BASE_POP_NORM)
+    flav = df.loc[mask_flav].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    basp = df.loc[mask_basep].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct2 = (flav / basp.replace(0, pd.NA) * 100).astype("Float64")
+    avg2 = None if float(basp.sum())==0 else round(float(flav.sum())/float(basp.sum())*100,1)
+    st.markdown("#### % Popcorny smakowe" + ("" if avg2 is None else f"  |  Średnia kina: **{avg2:.1f} %**"))
+    st.dataframe(pd.DataFrame({"Wartość": pct2}).sort_values("Wartość", ascending=False, na_position="last"),
+                 use_container_width=True)
 
     # % ShareCorn
-    share_num_qty = dff.loc[mask_share_num].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    share_den_qty = dff.loc[mask_share_den].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    tbl_share = (share_num_qty / share_den_qty.replace(0, pd.NA) * 100).astype("Float64")
-    den_sum = float(dff.loc[mask_share_den, "Quantity"].sum()); num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
-    avg_share = (num_sum / den_sum * 100) if den_sum else None
-    df_share = pd.DataFrame({"Wartość": tbl_share}).sort_values("Wartość", ascending=False, na_position="last")
-    st.markdown("#### % ShareCorn")
-    if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
-    st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True)
+    sn = df["__pnorm"].isin(SHARE_NUM_NORM)
+    sd = df["__pnorm"].isin(SHARE_DEN_NORM)
+    num = df.loc[sn].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    den = df.loc[sd].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0)
+    pct3= (num / den.replace(0, pd.NA) * 100).astype("Float64")
+    avg3= None if float(den.sum())==0 else round(float(num.sum())/float(den.sum())*100,1)
+    st.markdown("#### % ShareCorn" + ("" if avg3 is None else f"  |  Średnia kina: **{avg3:.1f} %**"))
+    st.dataframe(pd.DataFrame({"Wartość": pct3}).sort_values("Wartość", ascending=False, na_position="last"),
+                 use_container_width=True)
 
     # Średnia wartość transakcji
-    tx_df = dff.copy()
+    tx_df = df.copy()
     if "PosName" in tx_df.columns:
         mask_excl = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
         tx_df = tx_df.loc[~mask_excl].copy()
     st.markdown("#### Średnia wartość transakcji")
-    if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
-        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
-        nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
-        per_tx_total = f.where(nun <= 1, s)
-        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1)
-        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique()
-        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64")
-
-        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
-        nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
-        per_tx_total_all = f_all.where(nun_all <= 1, s_all)
-        global_tx_count = tx_df["TransactionId"].nunique()
-        global_revenue = float(per_tx_total_all.sum(min_count=1))
-        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
-
-        df_avg = pd.DataFrame({"Wartość": avg_by_user.reindex(users_sorted)}).sort_values("Wartość", ascending=False, na_position="last")
-        def _fmt_pln(x):
-            if pd.isna(x): return ""
-            s = f"{x:,.2f}".replace(",", " ").replace(".", ","); return s + " zł"
-        def _color(v):
-            try: return "background-color:#dcfce7; font-weight:600" if (not pd.isna(v) and avg_global is not None and v >= avg_global) else ""
-            except Exception: return ""
-        sty = df_avg.style.applymap(_color, subset=["Wartość"]).format({"Wartość": _fmt_pln})
-        if avg_global is not None: st.caption(f"Średnia kina: **{avg_global:,.2f} zł**".replace(",", " ").replace(".", ","))
-        st.dataframe(sty, use_container_width=True)
+    if {"TransactionId","NetAmount"}.issubset(tx_df.columns):
+        grp = tx_df.groupby(["UserFullName","TransactionId"])["NetAmount"]
+        per_tx = grp.first().where(grp.nunique(dropna=True) <= 1, grp.sum(min_count=1))
+        rev_by_user = per_tx.groupby("UserFullName").sum(min_count=1).reindex(users)
+        tx_by_user  = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users)
+        avg_by_user = (rev_by_user / tx_by_user.replace(0, pd.NA)).astype("Float64")
+        st.dataframe(pd.DataFrame({"Wartość": avg_by_user}).sort_values("Wartość", ascending=False, na_position="last"),
+                     use_container_width=True)
     else:
-        st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
+        st.info("Brak TransactionId/NetAmount — nie policzę średniej transakcji.")
 
 # ---------- Zakładka: Kreator Konkursów ----------
 with tab_comp:
     st.subheader("🧮 Kreator Konkursów")
-    df = ensure_data_or_stop()
-    df = add__date_column(df)
+    df = ensure_data_or_stop().copy()
+    need = {"UserFullName","ProductName","Quantity"}
+    if not need.issubset(df.columns):
+        st.error("Wymagane kolumny: UserFullName, ProductName, Quantity"); st.stop()
+    df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
 
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="contest_date")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-    else:
-        dff = df.copy()
+    products_all = sorted(df["ProductName"].dropna().unique())
+    users = sorted(df["UserFullName"].dropna().unique())
 
-    required = {"UserFullName", "ProductName", "Quantity"}
-    if not required.issubset(dff.columns):
-        st.error("Brak wymaganych kolumn: UserFullName, ProductName, Quantity.")
-        st.stop()
-
-    products_all = sorted(dff.get("ProductName", pd.Series(dtype=str)).dropna().unique())
-    users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-
-    # Grupa: Popcorny Smakowe
-    dff["__pnorm"] = dff["ProductName"].map(_norm_key)
-    mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
+    # grupa "Popcorny Smakowe"
+    df["__pnorm"] = df["ProductName"].map(_norm_key)
+    mask_flav = df["__pnorm"].isin(FLAVORED_NORM)
     GROUP_FLAVORED = "Popcorny Smakowe"
-    products_all_ext = [GROUP_FLAVORED] + products_all
+    products_plus = [GROUP_FLAVORED] + products_all
 
-    # UI: dynamiczne produkty + punkty
-    st.markdown("### Produkty i punktacja")
-    if "contest_products" not in st.session_state:
-        st.session_state["contest_products"] = [None]
-        st.session_state["contest_points"] = [1.0]
+    # konfigurator
+    if "contest_rows" not in st.session_state:
+        st.session_state["contest_rows"] = [ (None, 1.0) ]
 
-    cols_btn = st.columns([1,1,6])
-    with cols_btn[0]:
-        if st.button("➕ Dodaj produkt"):
-            st.session_state["contest_products"].append(None)
-            st.session_state["contest_points"].append(1.0)
-    with cols_btn[1]:
-        if st.button("➖ Usuń ostatni", disabled=len(st.session_state["contest_products"])<=1):
-            st.session_state["contest_products"].pop()
-            st.session_state["contest_points"].pop()
+    cols = st.columns([1,1,6])
+    with cols[0]:
+        if st.button("➕ Dodaj pozycję"):
+            st.session_state["contest_rows"].append((None, 1.0))
+    with cols[1]:
+        if st.button("➖ Usuń ostatnią", disabled=len(st.session_state["contest_rows"])<=1):
+            st.session_state["contest_rows"].pop()
 
-    for i, _ in enumerate(st.session_state["contest_products"]):
+    pairs = []
+    for i, (p0, pts0) in enumerate(st.session_state["contest_rows"]):
         c1, c2 = st.columns([3,1])
         with c1:
-            st.session_state["contest_products"][i] = st.selectbox(
-                f"Produkt #{i+1}", options=products_all_ext,
-                index=(products_all_ext.index(st.session_state['contest_products'][i]) if st.session_state['contest_products'][i] in products_all_ext else None),
-                placeholder="Wybierz produkt...", key=f"contest_prod_{i}"
-            )
+            prod = st.selectbox(f"Produkt #{i+1}", options=products_plus,
+                                index=(products_plus.index(p0) if p0 in products_plus else 0),
+                                key=f"contest_prod_{i}")
         with c2:
-            st.session_state["contest_points"][i] = st.number_input(
-                f"Punkty #{i+1}", min_value=-10000.0, max_value=10000.0, value=float(st.session_state["contest_points"][i]), step=0.5, key=f"contest_pts_{i}"
-            )
+            pts = st.number_input(f"Punkty #{i+1}", value=float(pts0), step=0.5, key=f"contest_pts_{i}")
+        pairs.append((prod, float(pts)))
 
     st.divider()
-    st.markdown("### Mianownik współczynnika")
-    den_mode = st.selectbox("Wybierz mianownik", ["Liczba transakcji", "Wybrany produkt", "Stała 1"], key="contest_den_mode")
+    den_mode = st.selectbox("Mianownik", ["Liczba transakcji", "Wybrany produkt", "Stała 1"])
     den_prod = None
     if den_mode == "Wybrany produkt":
-        den_prod = st.selectbox("Produkt dla mianownika", options=products_all_ext, placeholder="Wybierz produkt...", key="contest_den_prod")
-    if den_mode == "Liczba transakcji":
-        st.caption("Liczba unikatowych TransactionId po wykluczeniu POS: Bonarka CAF1/VIP1.")
+        den_prod = st.selectbox("Produkt (mianownik)", options=products_plus)
 
     if st.button("🧮 Oblicz ranking", type="primary"):
-        pairs = []
-        for prod, pts in zip(st.session_state["contest_products"], st.session_state["contest_points"]):
-            if prod is not None and pts is not None and float(pts) != 0.0:
-                pairs.append((prod, float(pts)))
-        if not pairs:
-            st.warning("Dodaj co najmniej jedną pozycję z niezerową punktacją.")
-            st.stop()
-
-        num = pd.Series(0.0, index=users_sorted, dtype="float")
+        import numpy as np
+        # licznik
+        num = pd.Series(0.0, index=users)
         for prod, pts in pairs:
+            if not prod: continue
             if prod == GROUP_FLAVORED:
-                s = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum()
+                s = df.loc[mask_flav].groupby("UserFullName")["Quantity"].sum()
             else:
-                s = dff.loc[dff["ProductName"] == prod].groupby("UserFullName")["Quantity"].sum()
-            s = s.reindex(users_sorted, fill_value=0).astype(float) * pts
-            num = num.add(s, fill_value=0.0)
-
+                s = df.loc[df["ProductName"] == prod].groupby("UserFullName")["Quantity"].sum()
+            num = num.add(s.reindex(users, fill_value=0).astype(float) * float(pts), fill_value=0.0)
+        # mianownik
         if den_mode == "Liczba transakcji":
-            tx_df = dff.copy()
+            if "TransactionId" not in df.columns:
+                st.error("Brak TransactionId → wybierz inny mianownik."); st.stop()
+            tx_df = df.copy()
             if "PosName" in tx_df.columns:
-                mask_excl = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-                tx_df = tx_df.loc[~mask_excl].copy()
-            if "TransactionId" not in tx_df.columns:
-                st.error("Brak kolumny TransactionId — nie można użyć mianownika 'Liczba transakcji'."); st.stop()
-            den = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype(float)
+                ex = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+                tx_df = tx_df.loc[~ex].copy()
+            den = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users, fill_value=0).astype(float)
         elif den_mode == "Wybrany produkt":
-            if not den_prod:
-                st.error("Wybierz produkt dla mianownika."); st.stop()
+            if not den_prod: st.error("Wybierz produkt dla mianownika."); st.stop()
             if den_prod == GROUP_FLAVORED:
-                den = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0).astype(float)
+                den = df.loc[mask_flav].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0).astype(float)
             else:
-                den = dff.loc[dff["ProductName"] == den_prod].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0).astype(float)
+                den = df.loc[df["ProductName"] == den_prod].groupby("UserFullName")["Quantity"].sum().reindex(users, fill_value=0).astype(float)
         else:
-            den = pd.Series(1.0, index=users_sorted, dtype="float")
+            den = pd.Series(1.0, index=users)
 
-        res = (num / den.replace(0, pd.NA)).astype("Float64")
-        wynik_pct = (res * 100).astype("Float64")
-
-        tx_df_all = dff.copy()
-        if "PosName" in tx_df_all.columns:
-            _m_ex_all = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_all = tx_df_all.loc[~_m_ex_all].copy()
-        tx_count_all = (tx_df_all.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0)
-                        if "TransactionId" in tx_df_all.columns else pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64"))
-
+        score = (num / den.replace(0, np.nan)).astype("float")
         out = pd.DataFrame({
-            "Wynik": res,
-            "Wynik (%)": wynik_pct,
+            "Wynik": score,
+            "Wynik (%)": (score*100),
             "Licznik (pkt)": num,
             "Mianownik": den,
-            "Transakcje": tx_count_all
         }).sort_values("Wynik", ascending=False, na_position="last")
-
-        # Kolumna Miejsce + medal w tej samej kolumnie
         out.insert(0, "Miejsce", range(1, len(out)+1))
-        disp = out.reset_index(names="Zleceniobiorca")[["Miejsce", "Zleceniobiorca", "Wynik (%)", "Licznik (pkt)", "Mianownik", "Transakcje"]]
 
-        def _place_with_medal(m):
-            try: mi = int(m)
-            except Exception: return m
-            return f"{mi} 🥇" if mi == 1 else (f"{mi} 🥈" if mi == 2 else (f"{mi} 🥉" if mi == 3 else f"{mi}"))
-        disp["Miejsce"] = disp["Miejsce"].map(_place_with_medal)
+        disp = out.reset_index(names="Zleceniobiorca")[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik"]]
+        st.dataframe(disp, use_container_width=True, hide_index=True)
 
-        def _row_style_top3(row):
-            try:
-                mm = int(re.match(r"\d+", str(row["Miejsce"])).group(0))
-            except Exception:
-                return [""] * len(row)
-            if mm == 1: style = "background-color:#fff4b8; font-weight:700"
-            elif mm == 2: style = "background-color:#e5e7eb; font-weight:600"
-            elif mm == 3: style = "background-color:#fde7c2; font-weight:600"
-            else: style = ""
-            return [style]*len(row)
-
-        sty = disp.style.apply(_row_style_top3, axis=1)
-        try: sty = sty.hide(axis="index")
-        except Exception: pass
-        st.dataframe(sty, use_container_width=True, hide_index=True)
-
-        # Eksport XLSX
+        # eksport
         try:
             buf = io.BytesIO()
-            export_df = out.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False, sheet_name="Ranking")
-                wb = writer.book; ws = writer.sheets["Ranking"]
-                fmt_pct = wb.add_format({"num_format": "0.0 %"})
-                fmt_num = wb.add_format({"num_format": "0.00"})
-                fmt_int = wb.add_format({"num_format": "0"})
-                ws.set_column("A:A", 9, fmt_int)
-                ws.set_column("B:B", 28)
-                ws.set_column("C:C", 12, fmt_pct)
-                ws.set_column("D:D", 16, fmt_num)
-                ws.set_column("E:E", 14, fmt_num)
-                ws.set_column("F:F", 13, fmt_int)
-                ws.set_row(0, None, wb.add_format({"bold": True}))
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+                disp.to_excel(w, index=False, sheet_name="Ranking")
             st.download_button("⬇️ Pobierz ranking (XLSX)", data=buf.getvalue(),
                                file_name="Konkurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as ex:
-            st.warning(f"Nie udało się przygotować eksportu XLSX: {ex}")
+            st.warning(f"Nie udało się przygotować XLSX: {ex}")
+
