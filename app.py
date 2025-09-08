@@ -9,24 +9,68 @@ st.set_page_config(page_title="CineStats — sprzedaż i KPI", layout="wide")
 st.title("🎬 CineStats — sprzedaż i KPI (multi-POS)")
 
 # ========================= POMOCNICZE =========================
+def _read_bytes(file_or_bytes) -> bytes:
+    """Zwraca zawartość pliku jako bytes niezależnie od tego, czy to ścieżka, UploadedFile, czy bytes/BytesIO."""
+    if isinstance(file_or_bytes, (bytes, bytearray)):
+        return bytes(file_or_bytes)
+    if hasattr(file_or_bytes, "getvalue"):  # UploadedFile/BytesIO
+        try:
+            return file_or_bytes.getvalue()
+        except Exception:
+            pass
+    if hasattr(file_or_bytes, "read"):
+        try:
+            pos = file_or_bytes.tell() if hasattr(file_or_bytes, "tell") else None
+            data = file_or_bytes.read()
+            if pos is not None and hasattr(file_or_bytes, "seek"):
+                file_or_bytes.seek(pos)
+            return data
+        except Exception:
+            pass
+    # ścieżka
+    try:
+        p = Path(str(file_or_bytes))
+        return p.read_bytes()
+    except Exception as e:
+        raise RuntimeError(f"Nie mogę odczytać pliku jako bytes: {e}")
+
 def read_any_table(file) -> pd.DataFrame:
     """
-    Czyta CSV/TXT/XLSX. Dla XLSX używa openpyxl. Jeśli się nie uda, pokazuje błąd dla danego pliku.
+    Czyta CSV/TXT/XLSX z solidnymi fallbackami:
+    - CSV/TXT: pandas.read_csv (sniff separator)
+    - XLSX: najpierw openpyxl; jeśli się nie uda -> pandas-calamine (jeśli zainstalowane)
     """
     name = getattr(file, "name", str(file))
     ext = str(name).lower().split(".")[-1]
-    try:
-        if ext in ("csv", "txt"):
+    data = _read_bytes(file)
+
+    if ext in ("csv", "txt"):
+        bio = io.BytesIO(data)
+        try:
+            return pd.read_csv(bio, sep=None, engine="python")
+        except Exception:
+            bio.seek(0)
+            return pd.read_csv(bio)
+
+    if ext == "xlsx":
+        # 1) openpyxl
+        try:
+            bio = io.BytesIO(data)
+            return pd.read_excel(bio, engine="openpyxl")
+        except Exception as e_openpyxl:
+            # 2) pandas-calamine (jeśli dostępne) — często radzi sobie z „uszkodzonym XML”
             try:
-                return pd.read_csv(file, sep=None, engine="python")
-            except Exception:
-                return pd.read_csv(file)
-        elif ext in ("xlsx",):
-            return pd.read_excel(file, engine="openpyxl")
-        else:
-            raise ValueError(f"Nieobsługiwany format: .{ext}")
-    except Exception as e:
-        raise RuntimeError(f"{name}: {e}")
+                import pandas_calamine  # noqa: F401
+                bio = io.BytesIO(data)
+                return pd.read_excel(bio, engine="calamine")
+            except Exception as e_calamine:
+                raise RuntimeError(
+                    f"{name}: Nie udało się wczytać XLSX.\n"
+                    f"- openpyxl: {e_openpyxl}\n"
+                    f"- calamine: {e_calamine}\n"
+                    f"Jeśli calamine nie jest zainstalowane, dodaj do requirements: pandas-calamine>=0.3.0"
+                )
+    raise RuntimeError(f"{name}: Nieobsługiwany format pliku")
 
 def add__date_column(df: pd.DataFrame) -> pd.DataFrame:
     """Próbuje zbudować kolumnę __date na podstawie kilku możliwych nazw kolumn."""
