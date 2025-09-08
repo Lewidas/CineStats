@@ -300,6 +300,31 @@ def ensure_data_or_stop():
         st.stop()
     return df
 
+
+# ---------- POS helpers (CAF/VIP) ----------
+def _exclude_caf_vip(df: pd.DataFrame) -> pd.DataFrame:
+    """Usuń wiersze z PosName zawierającym 'CAF' lub 'VIP' (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        return df.loc[~m].copy()
+    return df.copy()
+
+def _keep_caf(df: pd.DataFrame) -> pd.DataFrame:
+    """Zostaw tylko wiersze z PosName zawierającym 'CAF' (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("CAF", case=False, regex=True, na=False)
+        return df.loc[m].copy()
+    return df.iloc[0:0].copy()
+
+def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
+    """Zostaw tylko wiersze z PosName zawierającym 'VIP' (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("VIP", case=False, regex=True, na=False)
+        return df.loc[m].copy()
+    return df.iloc[0:0].copy()
+
+
+
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
     st.subheader("📈 Tabela wskaźników")
@@ -313,6 +338,7 @@ with tab_pivot:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask_d].copy()
+    dff = _exclude_caf_vip(dff)
     else:
         dff = df.copy()
 
@@ -350,7 +376,7 @@ with tab_pivot:
     # POS wykluczenia
     tx_df = dff.copy()
     if "PosName" in tx_df.columns:
-        m_ex = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+        m_ex = tx_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
         tx_df = tx_df.loc[~m_ex].copy()
 
     # Liczba transakcji i średnia wartość transakcji
@@ -479,6 +505,7 @@ with tab_indy:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask].copy()
+    dff = _exclude_caf_vip(dff)
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
@@ -509,7 +536,7 @@ with tab_indy:
 
         tx_df_all = dff.copy()
         if "PosName" in tx_df_all.columns:
-            m_ex = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+            m_ex = tx_df_all["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
             tx_df_all = tx_df_all.loc[~m_ex].copy()
         if ("TransactionId" in tx_df_all.columns) and ("NetAmount" in tx_df_all.columns):
             grp_all = tx_df_all.groupby("TransactionId")["NetAmount"]
@@ -542,7 +569,7 @@ with tab_indy:
 
         tx_df_u = dff_u.copy()
         if "PosName" in tx_df_u.columns:
-            m_ex_u = tx_df_u["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+            m_ex_u = tx_df_u["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
             tx_df_u = tx_df_u.loc[~m_ex_u].copy()
         if ("TransactionId" in tx_df_u.columns) and ("NetAmount" in tx_df_u.columns):
             grp_u = tx_df_u.groupby("TransactionId")["NetAmount"]
@@ -668,6 +695,7 @@ with tab_best:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask].copy()
+    dff = _exclude_caf_vip(dff)
     else:
         dff = df.copy()
 
@@ -732,7 +760,7 @@ with tab_best:
     # Średnia wartość transakcji
     tx_df = dff.copy()
     if "PosName" in tx_df.columns:
-        mask_excl = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+        mask_excl = tx_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
         tx_df = tx_df.loc[~mask_excl].copy()
     st.markdown("#### Średnia wartość transakcji")
     if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
@@ -775,6 +803,7 @@ with tab_comp:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask].copy()
+    dff = _exclude_caf_vip(dff)
     else:
         dff = df.copy()
 
@@ -851,7 +880,7 @@ with tab_comp:
         if den_mode == "Liczba transakcji":
             tx_df = dff.copy()
             if "PosName" in tx_df.columns:
-                mask_excl = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+                mask_excl = tx_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
                 tx_df = tx_df.loc[~mask_excl].copy()
             if "TransactionId" not in tx_df.columns:
                 st.error("Brak kolumny TransactionId — nie można użyć mianownika 'Liczba transakcji'."); st.stop()
@@ -871,7 +900,7 @@ with tab_comp:
 
         tx_df_all = dff.copy()
         if "PosName" in tx_df_all.columns:
-            _m_ex_all = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
+            _m_ex_all = tx_df_all["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
             tx_df_all = tx_df_all.loc[~_m_ex_all].copy()
         tx_count_all = (tx_df_all.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0)
                         if "TransactionId" in tx_df_all.columns else pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64"))
@@ -936,7 +965,7 @@ with tab_comp:
 
 # ---------- Zakładka: Cafe Stats ----------
 with tab_cafe:
-    st.subheader("☕ Cafe Stats — Bonarka CAF1")
+    st.subheader("☕ Cafe Stats — wszystkie kina (CAF)")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -955,8 +984,7 @@ with tab_cafe:
         st.error("Brak wymaganych kolumn do obliczeń CAF1: UserFullName, TransactionId, NetAmount, PosName.")
         st.stop()
 
-    caf1_mask = dff["PosName"].astype(str).str.contains("Bonarka CAF1", case=False, regex=False, na=False)
-    tx_df = dff.loc[caf1_mask].copy()
+    tx_df = _keep_caf(dff)
 
     if tx_df.empty:
         st.info("Brak danych dla POS 'Bonarka CAF1' w wybranym zakresie dat.")
@@ -970,7 +998,7 @@ with tab_cafe:
         tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
         avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
 
-        # Średnia kina (CAF1)
+        # Średnia (CAF — wszystkie kina)
         grp_all = tx_df.groupby("TransactionId")["NetAmount"]
         nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
         per_tx_all = f_all.where(nun_all <= 1, s_all)
@@ -979,27 +1007,27 @@ with tab_cafe:
         avg_global = (global_revenue / global_tx_count) if global_tx_count else None
 
         result = pd.DataFrame(index=users_sorted)
-        result["Liczba transakcji (CAF1)"] = tx_count_by_user.astype("Int64")
-        result["Średnia wartość transakcji (CAF1)"] = avg_by_user
+        result["Liczba transakcji (CAF)"] = tx_count_by_user.astype("Int64")
+        result["Średnia wartość transakcji (CAF)"] = avg_by_user
         if avg_global is not None:
             result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2)
         else:
             result["Różnica"] = pd.NA
 
-        result_sorted = result.sort_values(by="Średnia wartość transakcji (CAF1)", ascending=False, na_position="last")
+        result_sorted = result.sort_values(by="Średnia wartość transakcji (CAF)", ascending=False, na_position="last")
 
         summary_row = pd.DataFrame({
-            "Liczba transakcji (CAF1)": [global_tx_count if global_tx_count else None],
-            "Średnia wartość transakcji (CAF1)": [None if avg_global is None else round(avg_global, 2)],
+            "Liczba transakcji (CAF)": [global_tx_count if global_tx_count else None],
+            "Średnia wartość transakcji (CAF)": [None if avg_global is None else round(avg_global, 2)],
             "Różnica": [None],
-        }, index=["Średnia kina (CAF1)"])
+        }, index=["Średnia (CAF — wszystkie kina)"])
 
-        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (CAF1)","Średnia wartość transakcji (CAF1)","Różnica"]]
+        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (CAF)","Średnia wartość transakcji (CAF)","Różnica"]]
 
         def _fmt_pln(x):
             return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
         def _row_style(row):
-            if row.name == "Średnia kina (CAF1)":
+            if row.name == "Średnia (CAF — wszystkie kina)":
                 return ['font-weight:700; background-color:#f3f4f6' for _ in row]
             try:
                 diff = row.get("Różnica")
@@ -1010,7 +1038,7 @@ with tab_cafe:
             except Exception:
                 return ['' for _ in row]
 
-        styled = final_df.style.format({"Średnia wartość transakcji (CAF1)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
+        styled = final_df.style.format({"Średnia wartość transakcji (CAF)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
         st.dataframe(styled, use_container_width=True)
 
         # Eksport do XLSX
@@ -1037,7 +1065,7 @@ with tab_cafe:
 
 # ---------- Zakładka: VIP stats ----------
 with tab_vip:
-    st.subheader("VIP stats — Bonarka VIP1")
+    st.subheader("VIP stats — wszystkie kina (VIP)")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -1056,8 +1084,7 @@ with tab_vip:
         st.error("Brak wymaganych kolumn do obliczeń VIP1: UserFullName, TransactionId, NetAmount, PosName.")
         st.stop()
 
-    vip_mask = dff["PosName"].astype(str).str.contains("Bonarka VIP1", case=False, regex=False, na=False)
-    tx_df = dff.loc[vip_mask].copy()
+    tx_df = _keep_vip(dff)
 
     if tx_df.empty:
         st.info("Brak danych dla POS 'Bonarka VIP1' w wybranym zakresie dat.")
@@ -1071,7 +1098,7 @@ with tab_vip:
         tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
         avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
 
-        # Średnia kina (VIP1)
+        # Średnia (VIP — wszystkie kina)
         grp_all = tx_df.groupby("TransactionId")["NetAmount"]
         nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
         per_tx_all = f_all.where(nun_all <= 1, s_all)
@@ -1080,27 +1107,27 @@ with tab_vip:
         avg_global = (global_revenue / global_tx_count) if global_tx_count else None
 
         result = pd.DataFrame(index=users_sorted)
-        result["Liczba transakcji (VIP1)"] = tx_count_by_user.astype("Int64")
-        result["Średnia wartość transakcji (VIP1)"] = avg_by_user
+        result["Liczba transakcji (VIP)"] = tx_count_by_user.astype("Int64")
+        result["Średnia wartość transakcji (VIP)"] = avg_by_user
         if avg_global is not None:
             result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2)
         else:
             result["Różnica"] = pd.NA
 
-        result_sorted = result.sort_values(by="Średnia wartość transakcji (VIP1)", ascending=False, na_position="last")
+        result_sorted = result.sort_values(by="Średnia wartość transakcji (VIP)", ascending=False, na_position="last")
 
         summary_row = pd.DataFrame({
-            "Liczba transakcji (VIP1)": [global_tx_count if global_tx_count else None],
-            "Średnia wartość transakcji (VIP1)": [None if avg_global is None else round(avg_global, 2)],
+            "Liczba transakcji (VIP)": [global_tx_count if global_tx_count else None],
+            "Średnia wartość transakcji (VIP)": [None if avg_global is None else round(avg_global, 2)],
             "Różnica": [None],
-        }, index=["Średnia kina (VIP1)"])
+        }, index=["Średnia (VIP — wszystkie kina)"])
 
-        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (VIP1)","Średnia wartość transakcji (VIP1)","Różnica"]]
+        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (VIP)","Średnia wartość transakcji (VIP)","Różnica"]]
 
         def _fmt_pln(x):
             return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
         def _row_style(row):
-            if row.name == "Średnia kina (VIP1)":
+            if row.name == "Średnia (VIP — wszystkie kina)":
                 return ['font-weight:700; background-color:#f3f4f6' for _ in row]
             try:
                 diff = row.get("Różnica")
@@ -1111,7 +1138,7 @@ with tab_vip:
             except Exception:
                 return ['' for _ in row]
 
-        styled = final_df.style.format({"Średnia wartość transakcji (VIP1)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
+        styled = final_df.style.format({"Średnia wartość transakcji (VIP)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
         st.dataframe(styled, use_container_width=True)
 
         # Eksport do XLSX
