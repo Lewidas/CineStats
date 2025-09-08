@@ -259,7 +259,7 @@ SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
 # =============== TABS (podstrony) ===============
-tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats"])
+tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats"])
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
@@ -1022,6 +1022,99 @@ with tab_cafe:
                 ws.set_column("C:C", 28, fmt_pln)
             st.download_button("⬇️ Pobierz XLSX (Cafe Stats)", data=buffer.getvalue(),
                                file_name="CafeStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as ex:
+            st.warning(f"Nie udało się przygotować XLSX: {ex}")
+
+
+# ---------- Zakładka: VIP stats ----------
+with tab_vip:
+    st.subheader("VIP stats — Bonarka VIP1")
+    df = ensure_data_or_stop()
+    df = add__date_column(df)
+
+    # Zakres dat
+    if "__date" in df.columns and df["__date"].notna().any():
+        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
+        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="vip_date")
+        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
+        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
+        dff = df.loc[mask_d].copy()
+    else:
+        dff = df.copy()
+
+    # Wymagane kolumny
+    required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
+    if not required.issubset(dff.columns):
+        st.error("Brak wymaganych kolumn do obliczeń VIP1: UserFullName, TransactionId, NetAmount, PosName.")
+        st.stop()
+
+    # Tylko wiersze POS zawierające 'Bonarka VIP1'
+    vip_mask = dff["PosName"].astype(str).str.contains("Bonarka VIP1", case=False, regex=False, na=False)
+    tx_df = dff.loc[vip_mask].copy()
+
+    if tx_df.empty:
+        st.info("Brak danych dla POS 'Bonarka VIP1' w wybranym zakresie dat.")
+    else:
+        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
+        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
+        nun = grp.nunique(dropna=True)
+        s = grp.sum(min_count=1)
+        f = grp.first()
+        per_tx_total = f.where(nun <= 1, s)
+
+        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted)
+        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
+        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
+
+        # Średnia kina (tylko VIP1)
+        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
+        nun_all = grp_all.nunique(dropna=True)
+        s_all = grp_all.sum(min_count=1)
+        f_all = grp_all.first()
+        per_tx_all = f_all.where(nun_all <= 1, s_all)
+        global_tx_count = int(tx_df["TransactionId"].nunique())
+        global_revenue = float(per_tx_all.sum(min_count=1))
+        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
+
+        # Finalna tabela
+        result = pd.DataFrame(index=users_sorted)
+        result["Liczba transakcji (VIP1)"] = tx_count_by_user.astype("Int64")
+        result["Średnia wartość transakcji (VIP1)"] = avg_by_user
+        result_sorted = result.sort_values(by="Średnia wartość transakcji (VIP1)", ascending=False, na_position="last")
+
+        summary_row = pd.DataFrame({
+            "Liczba transakcji (VIP1)": [global_tx_count if global_tx_count else None],
+            "Średnia wartość transakcji (VIP1)": [None if avg_global is None else round(avg_global, 2)],
+        }, index=["Średnia kina (VIP1)"])
+
+        final_df = pd.concat([summary_row, result_sorted], axis=0)
+
+        # Styl i formatowanie
+        def _fmt_pln(x):
+            return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+        def _bold_and_shade(row):
+            return ['font-weight:700; background-color:#f3f4f6' for _ in row] if row.name in ["Średnia kina (VIP1)"] else ['' for _ in row]
+
+        styled = final_df.style.format({"Średnia wartość transakcji (VIP1)": _fmt_pln}).apply(_bold_and_shade, axis=1)
+        st.dataframe(styled, use_container_width=True)
+
+        # Eksport do XLSX
+        try:
+            import io
+            buffer = io.BytesIO()
+            out_df = final_df.copy()
+            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                out_df.to_excel(writer, index=True, sheet_name="VIPStats")
+                wb = writer.book; ws = writer.sheets["VIPStats"]
+                fmt_bold = wb.add_format({"bold": True})
+                fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
+                fmt_int = wb.add_format({"num_format": "0"})
+                ws.set_row(0, None, fmt_bold)
+                ws.set_column("A:A", 28)
+                ws.set_column("B:B", 20, fmt_int)
+                ws.set_column("C:C", 28, fmt_pln)
+            st.download_button("⬇️ Pobierz XLSX (VIP stats)", data=buffer.getvalue(),
+                               file_name="VIPStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as ex:
             st.warning(f"Nie udało się przygotować XLSX: {ex}")
 
