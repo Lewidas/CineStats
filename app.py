@@ -507,7 +507,7 @@ with tab_indy:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask].copy()
-    dff = _exclude_caf_vip(dff)
+        dff = _exclude_caf_vip(dff)
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
