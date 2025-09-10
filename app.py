@@ -606,26 +606,39 @@ with tab_indy:
             ],
         })
 
-        def safe_fmt_money(v):
-            # Zwraca string w PLN lub pusty, bez zależności od fmt_pln
-            try:
-                import pandas as pd
-                if v is None:
-                    return ""
-                # Obsłuż pd.NA / NaN
-                try:
-                    if pd.isna(v):
-                        return ""
-                except Exception:
-                    pass
-                val = float(v)
-                return f"{val:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-            except Exception:
-                return ""def safe_fmt_pct(v):
-            try:
-                import pandas as pd
-                if v is None:
-                    return ""
+        
+def safe_fmt_money(v):
+    try:
+        import pandas as pd
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        val = float(v)
+        return f"{val:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+    except Exception:
+        return ""
+
+
+
+def safe_fmt_pct(v):
+    try:
+        import pandas as pd
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        val = float(v)
+        return f"{val:.1f} %"
+    except Exception:
+        return ""
+
                 try:
                     if pd.isna(v):
                         return ""
