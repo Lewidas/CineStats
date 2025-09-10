@@ -636,7 +636,15 @@ with tab_indy:
     avg_tr_vip_u = _avg_user_for(vip_df, sel_user)
     avg_tr_vip_cinema = _avg_cinema_for(vip_df)
 
-    rows = [
+    
+
+    # Dostępność danych dla wykresów
+    has_bar  = (avg_tr_bar_u is not None)
+    has_cafe = (avg_tr_cafe_u is not None)
+    has_vip  = (avg_tr_vip_u is not None)
+    has_any_money = has_bar or has_cafe or has_vip
+    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
+rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
         ["Średnia wartość transakcji cafe", avg_tr_cafe_u, avg_tr_cafe_cinema, _fmt_diff_pln(avg_tr_cafe_u, avg_tr_cafe_cinema)],
         ["Średnia wartość transakcji vip",  avg_tr_vip_u,  avg_tr_vip_cinema,  _fmt_diff_pln(avg_tr_vip_u,  avg_tr_vip_cinema)],
@@ -746,53 +754,71 @@ with tab_indy:
         ).encode(y="ref:Q")
         return (bars + labels + ref).properties(width=360, height=320)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("#### Średnia wartość transakcji — bar")
-        df_bar_chart = _money_df(avg_tr_u, avg_tr_cinema)
-        st.altair_chart(_money_chart(df_bar_chart), use_container_width=False)
-    with col2:
-        st.markdown("#### Średnia wartość transakcji — cafe")
-        df_cafe_chart = _money_df(avg_tr_cafe_u, avg_tr_cafe_cinema)
-        st.altair_chart(_money_chart(df_cafe_chart), use_container_width=False)
-    with col3:
-        st.markdown("#### Średnia wartość transakcji — VIP")
-        df_vip_chart = _money_df(avg_tr_vip_u, avg_tr_vip_cinema)
-        st.altair_chart(_money_chart(df_vip_chart), use_container_width=False)
+    
+    # Renderuj tylko wykresy z danymi użytkownika
+    charts = []
+    if has_bar:
+        charts.append(("Średnia wartość transakcji — bar", avg_tr_u, avg_tr_cinema))
+    if has_cafe:
+        charts.append(("Średnia wartość transakcji — cafe", avg_tr_cafe_u, avg_tr_cafe_cinema))
+    if has_vip:
+        charts.append(("Średnia wartość transakcji — VIP", avg_tr_vip_u, avg_tr_vip_cinema))
+
+    if charts:
+        cols = st.columns(len(charts))
+        for col, (title, uval, cval) in zip(cols, charts):
+            with col:
+                st.markdown(f"#### {title}")
+                df_local = _money_df(uval, cval)
+                st.altair_chart(_money_chart(df_local), use_container_width=False)
+    else:
+        st.info("Brak danych do wykresów średniej wartości transakcji dla wybranej osoby.")
+
 # Wskaźniki % (facet)
-    st.caption("Wskaźniki procentowe")
-    metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-    user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
-    cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
-    rows = []
-    for m, u, c in zip(metrics, user_vals, cinema_vals):
-        uval = 0.0 if u is None else u
-        cval = 0.0 if c is None else c
-        ucol = _gray if (u is None or c is None) else (_green if uval >= cval else _red)
-        label = ""
-        if u is not None and c is not None:
-            d = uval - cval
-            s = "+" if d >= 0 else "−"
-            label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-        rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol})
-        rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray})
-    df_chart_pct = pd.DataFrame(rows)
-    base_pct = alt.Chart(df_chart_pct)
-    bars_pct = base_pct.mark_bar(size=28).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q", title="%"),
-        color=alt.Color("kolor:N", legend=None, scale=None),
-        tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-    )
-    labels_pct = base_pct.mark_text(dy=-6, size=18).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q"),
-        text=alt.Text("diff_label:N"),
-        color=alt.Color("label_color:N", legend=None, scale=None)
-    )
-    rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="Wartość:Q")
-    chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
-    st.altair_chart(chart_pct, use_container_width=True)
+    if has_pct:
+        st.caption("Wskaźniki procentowe")
+        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
+        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
+        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
+        rows = []
+        for m, u, c in zip(metrics, user_vals, cinema_vals):
+            if u is None:
+                continue  # pomiń wykres dla wskaźnika bez danych użytkownika
+            uval = u
+            cval = 0.0 if c is None else c
+            _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
+            ucol = _gray if (c is None) else (_green if uval >= cval else _red)
+            label = ""
+            if c is not None:
+                d = uval - cval
+                s = "+" if d >= 0 else "−"
+                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
+            rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": float(uval), "kolor": ucol, "diff_label": label, "label_color": ucol})
+            rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": float(cval), "kolor": _gray, "diff_label": "", "label_color": _gray})
+
+        if rows:
+            df_chart_pct = pd.DataFrame(rows)
+            base_pct = alt.Chart(df_chart_pct)
+            bars_pct = base_pct.mark_bar(size=28).encode(
+                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
+                y=alt.Y("Wartość:Q", title="%"),
+                color=alt.Color("kolor:N", legend=None, scale=None),
+                tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
+            )
+            labels_pct = base_pct.mark_text(dy=-6, size=18).encode(
+                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
+                y=alt.Y("Wartość:Q"),
+                text=alt.Text("diff_label:N"),
+                color=alt.Color("label_color:N", legend=None, scale=None)
+            )
+            rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
+            chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
+            st.altair_chart(chart_pct, use_container_width=True)
+        else:
+            st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
+    else:
+        st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
+
 
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
