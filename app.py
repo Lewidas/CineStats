@@ -1011,6 +1011,9 @@ with tab_comp:
     if den_mode == "Liczba transakcji":
         st.caption("Liczba unikatowych TransactionId po wykluczeniu POS: Bonarka CAF1/VIP1.")
 
+
+    # Minimalna liczba transakcji (próg kwalifikacji)
+    min_tx = st.number_input("Minimalna liczba transakcji", min_value=0, value=0, step=1)
     if st.button("🧮 Oblicz ranking", type="primary"):
         pairs = []
         for prod, pts in zip(st.session_state["contest_products"], st.session_state["contest_points"]):
@@ -1057,7 +1060,9 @@ with tab_comp:
         tx_count_all = (tx_df_all.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0)
                         if "TransactionId" in tx_df_all.columns else pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64"))
 
-        out = pd.DataFrame({
+        
+        # Zbuduj pełny ranking (bez minimum), następnie podziel wg progu min_tx
+        out_full = pd.DataFrame({
             "Wynik": res,
             "Wynik (%)": wynik_pct,
             "Licznik (pkt)": num,
@@ -1065,19 +1070,26 @@ with tab_comp:
             "Transakcje": tx_count_all
         }).sort_values("Wynik", ascending=False, na_position="last")
 
-        # Kolumna Miejsce + medal w tej samej kolumnie
-        out.insert(0, "Miejsce", range(1, len(out)+1))
-        disp = out.reset_index(names="Zleceniobiorca")[["Miejsce", "Zleceniobiorca", "Wynik (%)", "Licznik (pkt)", "Mianownik", "Transakcje"]]
+        # Rozdział: kwalifikowani (>= min_tx) i poniżej progu (< min_tx)
+        _tx_num = pd.to_numeric(out_full["Transakcje"], errors="coerce").fillna(0)
+        mask_ok = _tx_num >= float(min_tx if 'min_tx' in locals() else 0)
+        out_ok = out_full.loc[mask_ok].copy()
+        out_low = out_full.loc[~mask_ok].copy()
+
+        # --- Tabela zwycięzców (kwalifikowani) ---
+        out_ok = out_ok.sort_values("Wynik", ascending=False, na_position="last")
+        out_ok.insert(0, "Miejsce", range(1, len(out_ok)+1))
+        disp_ok = out_ok.reset_index(names="Zleceniobiorca")[["Miejsce", "Zleceniobiorca", "Wynik (%)", "Licznik (pkt)", "Mianownik", "Transakcje"]]
 
         def _place_with_medal(m):
             try: mi = int(m)
             except Exception: return m
             return f"{mi} 🥇" if mi == 1 else (f"{mi} 🥈" if mi == 2 else (f"{mi} 🥉" if mi == 3 else f"{mi}"))
-        disp["Miejsce"] = disp["Miejsce"].map(_place_with_medal)
+        disp_ok["Miejsce"] = disp_ok["Miejsce"].map(_place_with_medal)
 
         def _row_style_top3(row):
             try:
-                mm = int(re.match(r"\d+", str(row["Miejsce"])).group(0))
+                mm = int(str(row["Miejsce"]).split()[0])
             except Exception:
                 return [""] * len(row)
             if mm == 1: style = "background-color:#fff4b8; font-weight:700"
@@ -1086,10 +1098,66 @@ with tab_comp:
             else: style = ""
             return [style]*len(row)
 
-        sty = disp.style.apply(_row_style_top3, axis=1)
-        try: sty = sty.hide(axis="index")
+        n_ok = int(len(out_ok))
+        st.markdown(f"#### ✅ Ranking — osoby spełniające minimum transakcji ({n_ok})")
+        sty_ok = disp_ok.style.apply(_row_style_top3, axis=1)
+        try: sty_ok = sty_ok.hide(axis="index")
         except Exception: pass
-        st.dataframe(sty, use_container_width=True, hide_index=True)
+        st.dataframe(sty_ok, use_container_width=True, hide_index=True)
+
+        # --- Tabela poniżej progu (bez kolorów i medali) ---
+        if not out_low.empty:
+            out_low = out_low.sort_values("Wynik", ascending=False, na_position="last")
+            out_low.insert(0, "Miejsce", range(1, len(out_low)+1))
+            disp_low = out_low.reset_index(names="Zleceniobiorca")[["Miejsce", "Zleceniobiorca", "Wynik (%)", "Licznik (pkt)", "Mianownik", "Transakcje"]]
+            n_low = int(len(out_low))
+            st.markdown(f"#### ℹ️ Pozostali — poniżej minimalnej liczby transakcji ({n_low})")
+            st.dataframe(disp_low, use_container_width=True, hide_index=True)
+
+            # Eksport 'poniżej progu'
+            try:
+                buf_low = io.BytesIO()
+                export_low = out_low.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
+                with pd.ExcelWriter(buf_low, engine="xlsxwriter") as writer:
+                    export_low.to_excel(writer, index=False, sheet_name="PonizejProgu")
+                    wb = writer.book; ws = writer.sheets["PonizejProgu"]
+                    fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                    fmt_num = wb.add_format({"num_format": "0.00"})
+                    fmt_int = wb.add_format({"num_format": "0"})
+                    ws.set_column("A:A", 9, fmt_int)
+                    ws.set_column("B:B", 28)
+                    ws.set_column("C:C", 12, fmt_pct)
+                    ws.set_column("D:D", 16, fmt_num)
+                    ws.set_column("E:E", 14, fmt_num)
+                    ws.set_column("F:F", 13, fmt_int)
+                    ws.set_row(0, None, wb.add_format({"bold": True}))
+                st.download_button("⬇️ Pobierz 'poniżej progu' (XLSX)", data=buf_low.getvalue(),
+                                   file_name="Konkurs_ponizej_progu.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            except Exception as ex:
+                st.warning(f"Nie udało się przygotować eksportu XLSX (poniżej progu): {ex}")
+
+        # Eksport XLSX — zwycięzcy
+        try:
+            buf = io.BytesIO()
+            export_df = out_ok.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                export_df.to_excel(writer, index=False, sheet_name="Ranking")
+                wb = writer.book; ws = writer.sheets["Ranking"]
+                fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                fmt_num = wb.add_format({"num_format": "0.00"})
+                fmt_int = wb.add_format({"num_format": "0"})
+                ws.set_column("A:A", 9, fmt_int)
+                ws.set_column("B:B", 28)
+                ws.set_column("C:C", 12, fmt_pct)
+                ws.set_column("D:D", 16, fmt_num)
+                ws.set_column("E:E", 14, fmt_num)
+                ws.set_column("F:F", 13, fmt_int)
+                ws.set_row(0, None, wb.add_format({"bold": True}))
+            st.download_button("⬇️ Pobierz ranking (XLSX)", data=buf.getvalue(),
+                               file_name="Konkurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as ex:
+            st.warning(f"Nie udało się przygotować eksportu XLSX: {ex}")
+        
 
         # Eksport XLSX
         try:
