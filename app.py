@@ -704,10 +704,58 @@ with tab_indy:
     )
     ref_df = pd.DataFrame({"ref":[val_kino]})
     rule_money = alt.Chart(ref_df).mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="ref:Q")
-    chart_money = (bars_money + labels_money + rule_money).properties(width=780, height=450)
-    st.altair_chart(chart_money, use_container_width=False)
+    
+    # Trzy wykresy obok siebie: bar / cafe / VIP
+    def _money_df(orig_user, orig_kino):
+        # build DF + colors + diff label
+        _u = 0.0 if orig_user is None else float(orig_user)
+        _k = 0.0 if orig_kino is None else float(orig_kino)
+        _col = _gray
+        if (orig_user is not None) and (orig_kino is not None):
+            _col = _green if orig_user >= orig_kino else _red
+        _lab = ""
+        if (orig_user is not None) and (orig_kino is not None):
+            d = orig_user - orig_kino
+            s = "+" if d >= 0 else "−"
+            _lab = s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
+        return pd.DataFrame([
+            {"Kto": sel_user, "Wartość": _u, "kolor": _col, "label": _lab, "label_color": _col},
+            {"Kto": "Średnia kina", "Wartość": _k, "kolor": _gray, "label": "", "label_color": _gray},
+        ])
 
-    # Wskaźniki % (facet)
+    def _money_chart(df_local):
+        base = alt.Chart(df_local)
+        bars = base.mark_bar(size=28).encode(
+            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
+            y=alt.Y("Wartość:Q", title="zł"),
+            color=alt.Color("kolor:N", legend=None, scale=None),
+            tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=",.2f")]
+        )
+        labels = base.mark_text(dy=-6, size=16).encode(
+            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
+            y=alt.Y("Wartość:Q"),
+            text=alt.Text("label:N"),
+            color=alt.Color("label_color:N", legend=None, scale=None)
+        )
+        ref = alt.Chart(pd.DataFrame({"ref":[float(df_local.loc[df_local['Kto']=='Średnia kina','Wartość'].iloc[0])] })).mark_rule(
+            strokeDash=[6,4], color=_gray, opacity=0.8
+        ).encode(y="ref:Q")
+        return (bars + labels + ref).properties(width=360, height=320)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("#### Średnia wartość transakcji — bar")
+        df_bar_chart = _money_df(avg_tr_u, avg_tr_cinema)
+        st.altair_chart(_money_chart(df_bar_chart), use_container_width=False)
+    with col2:
+        st.markdown("#### Średnia wartość transakcji — cafe")
+        df_cafe_chart = _money_df(avg_tr_cafe_u, avg_tr_cafe_cinema)
+        st.altair_chart(_money_chart(df_cafe_chart), use_container_width=False)
+    with col3:
+        st.markdown("#### Średnia wartość transakcji — VIP")
+        df_vip_chart = _money_df(avg_tr_vip_u, avg_tr_vip_cinema)
+        st.altair_chart(_money_chart(df_vip_chart), use_container_width=False)
+# Wskaźniki % (facet)
     st.caption("Wskaźniki procentowe")
     metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
     user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
