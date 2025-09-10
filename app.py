@@ -489,13 +489,8 @@ with tab_pivot:
             st.metric(label="Suma sprzedanych sztuk (po filtrach daty)", value=f"{total_qty2:,.0f}".replace(",", " "))
 
 
-# ---------- Zakładka: Wyniki indywidualne ----------
-with tab_indy:
-    st.subheader("👤 Wyniki indywidualne (bez POS: CAF/VIP w części 'bar')")
-    df = ensure_data_or_stop()
 
-    # FILTR DAT (na pełnym df, potem wydzielimy bar/cafe/vip)
-    
+# ---------- Zakładka: Wyniki indywidualne ----------
 with tab_indy:
     st.subheader("👤 Wyniki indywidualne (bez POS: CAF/VIP w części 'bar')")
     df = ensure_data_or_stop()
@@ -510,7 +505,6 @@ with tab_indy:
         df_all = df.loc[mask_d].copy()
     else:
         df_all = df.copy()
-
 
     # Podzbiory
     df_bar  = _exclude_caf_vip(df_all)
@@ -533,7 +527,8 @@ with tab_indy:
                 frame["Quantity"] = pd.to_numeric(frame["Quantity"], errors="coerce").fillna(0)
             if "NetAmount" in frame.columns:
                 frame["NetAmount"] = pd.to_numeric(frame["NetAmount"], errors="coerce")
-            frame["__pnorm"] = frame["ProductName"].map(_norm_key) if "ProductName" in frame.columns else ""
+            if "ProductName" in frame.columns:
+                frame["__pnorm"] = frame["ProductName"].map(_norm_key)
 
         def avg_per_user(frame, who):
             if not {"TransactionId","NetAmount"}.issubset(frame.columns):
@@ -575,21 +570,21 @@ with tab_indy:
 
         # --- Procentowe KPI liczymy jak dotąd na 'bar' (bez POS CAF/VIP)
         def _pct_local(frame, num_mask, den_mask):
-            if "Quantity" not in frame.columns: return None
+            if "Quantity" not in frame.columns or frame.empty: return None
             n = float(frame.loc[num_mask, "Quantity"].sum())
             d = float(frame.loc[den_mask, "Quantity"].sum())
             return None if d == 0 else round(n/d*100, 1)
 
-        # Dla 'bar'
-        pnorm = df_bar["__pnorm"] if "__pnorm" in df_bar.columns else pd.Series([], dtype=str)
-        extra_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.eq("extranachossauce"), pnorm.isin({"tackanachossrednia","tackanachosduza"}))
-        extra_cine = _pct_local(df_bar, pnorm.eq("extranachossauce"), pnorm.isin({"tackanachossrednia","tackanachosduza"}))
+        du_bar = df_bar[df_bar["UserFullName"]==user].copy()
 
-        flav_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.isin(FLAVORED_NORM), pnorm.isin(BASE_POP_NORM))
-        flav_cine = _pct_local(df_bar, pnorm.isin(FLAVORED_NORM), pnorm.isin(BASE_POP_NORM))
+        extra_user = _pct_local(du_bar, du_bar["__pnorm"].eq("extranachossauce"), du_bar["__pnorm"].isin({"tackanachossrednia","tackanachosduza"}))
+        extra_cine = _pct_local(df_bar, df_bar["__pnorm"].eq("extranachossauce"), df_bar["__pnorm"].isin({"tackanachossrednia","tackanachosduza"}))
 
-        share_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.isin(SHARE_NUM_NORM), pnorm.isin(SHARE_DEN_NORM))
-        share_cine = _pct_local(df_bar, pnorm.isin(SHARE_NUM_NORM), pnorm.isin(SHARE_DEN_NORM))
+        flav_user = _pct_local(du_bar, du_bar["__pnorm"].isin(FLAVORED_NORM), du_bar["__pnorm"].isin(BASE_POP_NORM))
+        flav_cine = _pct_local(df_bar, df_bar["__pnorm"].isin(FLAVORED_NORM), df_bar["__pnorm"].isin(BASE_POP_NORM))
+
+        share_user = _pct_local(du_bar, du_bar["__pnorm"].isin(SHARE_NUM_NORM), du_bar["__pnorm"].isin(SHARE_DEN_NORM))
+        share_cine = _pct_local(df_bar, df_bar["__pnorm"].isin(SHARE_NUM_NORM), df_bar["__pnorm"].isin(SHARE_DEN_NORM))
 
         # --- Tabela wyników
         disp = pd.DataFrame({
@@ -611,15 +606,37 @@ with tab_indy:
             ],
         })
 
-        def _fmt_row(i, v):
-            if i in (0,1,2):  # trzy pierwsze wiersze w PLN
-                return "" if pd.isna(v) else fmt_pln(float(v))
-            else:
-                return "" if pd.isna(v) else f"{float(v):.1f} %"
+        def safe_fmt_money(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            try:
+                val = float(v)
+            except Exception:
+                try:
+                    val = pd.to_numeric(v, errors="coerce")
+                    if pd.isna(val): return ""
+                    val = float(val)
+                except Exception:
+                    return str(v)
+            return fmt_pln(val)
+
+        def safe_fmt_pct(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            try:
+                val = float(v)
+            except Exception:
+                try:
+                    val = pd.to_numeric(v, errors="coerce")
+                    if pd.isna(val): return ""
+                    val = float(val)
+                except Exception:
+                    return ""
+            return f"{val:.1f} %"
 
         formatted = disp.copy()
-        formatted[user] = [ _fmt_row(i, v) for i, v in enumerate(disp[user]) ]
-        formatted["Średnia kina"] = [ _fmt_row(i, v) for i, v in enumerate(disp["Średnia kina"]) ]
+        formatted[user] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp[user].tolist()) ]
+        formatted["Średnia kina"] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp["Średnia kina"].tolist()) ]
         st.dataframe(formatted, use_container_width=True, hide_index=True)
 
         # --- Wykresy: średnie transakcji cafe i vip
@@ -632,7 +649,8 @@ with tab_indy:
                 "Wartość": [val_user, val_cine]
             })
             # Kolory: zielony gdy powyżej średniej, czerwony poniżej
-            dfc["kolor"] = ["powyżej" if (val_user is not None and val_cine is not None and val_user > val_cine) else "poniżej", "średnia"]
+            above = (val_user is not None and val_cine is not None and val_user > val_cine)
+            dfc["kolor"] = ["powyżej" if above else "poniżej", "średnia"]
             base = alt.Chart(dfc).mark_bar().encode(
                 x=alt.X("Kto:N", sort=None),
                 y=alt.Y("Wartość:Q"),
