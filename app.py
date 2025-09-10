@@ -644,14 +644,15 @@ with tab_indy:
     has_vip  = (avg_tr_vip_u is not None)
     has_any_money = has_bar or has_cafe or has_vip
     has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
-rows = [
+    
+    rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
         ["Średnia wartość transakcji cafe", avg_tr_cafe_u, avg_tr_cafe_cinema, _fmt_diff_pln(avg_tr_cafe_u, avg_tr_cafe_cinema)],
         ["Średnia wartość transakcji vip",  avg_tr_vip_u,  avg_tr_vip_cinema,  _fmt_diff_pln(avg_tr_vip_u,  avg_tr_vip_cinema)],
         ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
         ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
         ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
-        ]
+    ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
     
