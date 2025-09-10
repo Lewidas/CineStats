@@ -340,7 +340,15 @@ with tab_pivot:
         dff = df.loc[mask_d].copy()
         dff = _exclude_caf_vip(dff)
     else:
-        dff = df.copy()
+        df_all = df.copy()
+
+        bar_df  = _exclude_caf_vip(df_all)
+
+        cafe_df = _keep_caf(df_all)
+
+        vip_df  = _keep_vip(df_all)
+
+        dff = bar_df
 
     required = {"UserFullName", "ProductName", "Quantity"}
     if not required.issubset(dff.columns):
@@ -504,8 +512,15 @@ with tab_indy:
             sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-        dff = _exclude_caf_vip(dff)
+        df_all = df.loc[mask].copy()
+
+        bar_df  = _exclude_caf_vip(df_all)
+
+        cafe_df = _keep_caf(df_all)
+
+        vip_df  = _keep_vip(df_all)
+
+        dff = bar_df
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
@@ -603,8 +618,20 @@ with tab_indy:
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
     st.markdown("#### Zestawienie")
-    tx_label = "-" if tx_count_u is None else f"{tx_count_u:,}".replace(",", " ")
-    st.metric("Liczba transakcji (osoba)", tx_label)
+    # Trzy metryki: bar / cafe / vip
+    def _count_tx(frame, user):
+        if "TransactionId" not in frame.columns: return None
+        sub = frame[frame.get("UserFullName","") == user]
+        return int(sub["TransactionId"].nunique()) if not sub.empty else 0
+    tx_bar  = _count_tx(bar_df,  sel_user)
+    tx_cafe = _count_tx(cafe_df, sel_user)
+    tx_vip  = _count_tx(vip_df,  sel_user)
+    c1,c2,c3 = st.columns(3)
+    def _fmt_int(x):
+        return "-" if (x is None) else f"{x:,}".replace(",", " ")
+    c1.metric("Liczba transakcji — bar (bez CAF/VIP)", _fmt_int(tx_bar))
+    c2.metric("Liczba transakcji — cafe (CAF)", _fmt_int(tx_cafe))
+    c3.metric("Liczba transakcji — VIP", _fmt_int(tx_vip))
     disp = df_view.copy()
     disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]] = disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     mask_pct = disp["Wskaźnik"] != "Średnia wartość transakcji"
@@ -694,8 +721,15 @@ with tab_best:
         picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="best_date")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-        dff = _exclude_caf_vip(dff)
+        df_all = df.loc[mask].copy()
+
+        bar_df  = _exclude_caf_vip(df_all)
+
+        cafe_df = _keep_caf(df_all)
+
+        vip_df  = _keep_vip(df_all)
+
+        dff = bar_df
     else:
         dff = df.copy()
 
@@ -802,8 +836,15 @@ with tab_comp:
         picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="contest_date")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-        dff = _exclude_caf_vip(dff)
+        df_all = df.loc[mask].copy()
+
+        bar_df  = _exclude_caf_vip(df_all)
+
+        cafe_df = _keep_caf(df_all)
+
+        vip_df  = _keep_vip(df_all)
+
+        dff = bar_df
     else:
         dff = df.copy()
 
