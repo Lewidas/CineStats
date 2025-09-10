@@ -609,11 +609,40 @@ with tab_indy:
         if u is None or c is None: return ""
         d = u - c; s = "+" if d>=0 else "−"; v = f"{abs(d):,.2f}".replace(",", " ").replace(".", ","); return f"{s}{v} zł"
 
+    
+    # --- Averages for bar/cafe/vip (user & cinema)
+    def _avg_user_for(frame, user):
+        if not {"TransactionId","NetAmount","UserFullName"}.issubset(frame.columns):
+            return None
+        f = frame[frame["UserFullName"] == user]
+        if f.empty: return None
+        g = f.groupby("TransactionId")["NetAmount"]
+        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+        txc = int(f["TransactionId"].nunique())
+        return None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
+
+    def _avg_cinema_for(frame):
+        if not {"TransactionId","NetAmount"}.issubset(frame.columns):
+            return None
+        g = frame.groupby("TransactionId")["NetAmount"]
+        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+        txc = int(frame["TransactionId"].nunique())
+        return None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
+
+    avg_tr_bar_u = avg_tr_u
+    avg_tr_bar_cinema = avg_tr_cinema
+    avg_tr_cafe_u = _avg_user_for(cafe_df, sel_user)
+    avg_tr_cafe_cinema = _avg_cinema_for(cafe_df)
+    avg_tr_vip_u = _avg_user_for(vip_df, sel_user)
+    avg_tr_vip_cinema = _avg_cinema_for(vip_df)
+
     rows = [
-        ["Średnia wartość transakcji", avg_tr_u, avg_tr_cinema, _fmt_diff_pln(avg_tr_u, avg_tr_cinema)],
-        ["% Extra Sos", pct_extra_u, pct_extra_cinema, _fmt_diff_pp(pct_extra_u, pct_extra_cinema)],
-        ["% Popcorny smakowe", pct_popcorny_u, pct_popcorny_cinema, _fmt_diff_pp(pct_popcorny_u, pct_popcorny_cinema)],
-        ["% ShareCorn", pct_sharecorn_u, pct_sharecorn_cinema, _fmt_diff_pp(pct_sharecorn_u, pct_sharecorn_cinema)],
+        ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
+        ["Średnia wartość transakcji cafe", avg_tr_cafe_u, avg_tr_cafe_cinema, _fmt_diff_pln(avg_tr_cafe_u, avg_tr_cafe_cinema)],
+        ["Średnia wartość transakcji vip",  avg_tr_vip_u,  avg_tr_vip_cinema,  _fmt_diff_pln(avg_tr_vip_u,  avg_tr_vip_cinema)],
+        ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
+        ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
+        ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
     ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
@@ -632,11 +661,14 @@ with tab_indy:
     c1.metric("Liczba transakcji — bar (bez CAF/VIP)", _fmt_int(tx_bar))
     c2.metric("Liczba transakcji — cafe (CAF)", _fmt_int(tx_cafe))
     c3.metric("Liczba transakcji — VIP", _fmt_int(tx_vip))
+
+    # Formatowanie tabeli: PLN dla 3 pierwszych wierszy, % dla reszty
     disp = df_view.copy()
-    disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]] = disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]].applymap(_fmt_pln)
-    mask_pct = disp["Wskaźnik"] != "Średnia wartość transakcji"
-    disp.loc[mask_pct, [sel_user, "Średnia kina"]] = disp.loc[mask_pct, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
+    money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
+    disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
+    disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
     st.dataframe(disp, use_container_width=True, hide_index=True)
+
 
     # Wykresy
     st.markdown("### 📊 Wykresy porównawcze")
