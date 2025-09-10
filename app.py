@@ -607,34 +607,34 @@ with tab_indy:
         })
 
         def safe_fmt_money(v):
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                return ""
+            # Zwraca string w PLN lub pusty, bez zależności od fmt_pln
             try:
-                val = float(v)
-            except Exception:
-                try:
-                    val = pd.to_numeric(v, errors="coerce")
-                    if pd.isna(val): return ""
-                    val = float(val)
-                except Exception:
-                    return str(v)
-            return fmt_pln(val)
-
-        def safe_fmt_pct(v):
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                return ""
-            try:
-                val = float(v)
-            except Exception:
-                try:
-                    val = pd.to_numeric(v, errors="coerce")
-                    if pd.isna(val): return ""
-                    val = float(val)
-                except Exception:
+                import pandas as pd
+                if v is None:
                     return ""
-            return f"{val:.1f} %"
-
-        formatted = disp.copy()
+                # Obsłuż pd.NA / NaN
+                try:
+                    if pd.isna(v):
+                        return ""
+                except Exception:
+                    pass
+                val = float(v)
+                return f"{val:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+            except Exception:
+                return ""def safe_fmt_pct(v):
+            try:
+                import pandas as pd
+                if v is None:
+                    return ""
+                try:
+                    if pd.isna(v):
+                        return ""
+                except Exception:
+                    pass
+                val = float(v)
+                return f"{val:.1f} %"
+            except Exception:
+                return ""formatted = disp.copy()
         formatted[user] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp[user].tolist()) ]
         formatted["Średnia kina"] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp["Średnia kina"].tolist()) ]
         st.dataframe(formatted, use_container_width=True, hide_index=True)
