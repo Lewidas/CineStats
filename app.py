@@ -780,7 +780,7 @@ with tab_indy:
         color=alt.Color("kolor:N", legend=None, scale=None),
         tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
     )
-    labels_pct = base_pct.mark_text(dy=-6, size=16).encode(
+    labels_pct = base_pct.mark_text(dy=-6, size=18).encode(
         x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
         y=alt.Y("Wartość:Q"),
         text=alt.Text("diff_label:N"),
