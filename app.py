@@ -607,6 +607,7 @@ with tab_indy:
         })
 
         
+
 def safe_fmt_money(v):
     try:
         import pandas as pd
@@ -621,7 +622,6 @@ def safe_fmt_money(v):
         return f"{val:,.2f}".replace(",", " ").replace(".", ",") + " zł"
     except Exception:
         return ""
-
 
 
 def safe_fmt_pct(v):
@@ -639,15 +639,7 @@ def safe_fmt_pct(v):
     except Exception:
         return ""
 
-                try:
-                    if pd.isna(v):
-                        return ""
-                except Exception:
-                    pass
-                val = float(v)
-                return f"{val:.1f} %"
-            except Exception:
-                return ""formatted = disp.copy()
+formatted = disp.copy()
         formatted[user] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp[user].tolist()) ]
         formatted["Średnia kina"] = [ safe_fmt_money(v) if i in (0,1,2) else safe_fmt_pct(v) for i, v in enumerate(disp["Średnia kina"].tolist()) ]
         st.dataframe(formatted, use_container_width=True, hide_index=True)
