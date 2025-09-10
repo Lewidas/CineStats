@@ -495,7 +495,22 @@ with tab_indy:
     df = ensure_data_or_stop()
 
     # FILTR DAT (na pełnym df, potem wydzielimy bar/cafe/vip)
-    df_all = date_filtered(df, key="indy_date")
+    
+with tab_indy:
+    st.subheader("👤 Wyniki indywidualne (bez POS: CAF/VIP w części 'bar')")
+    df = ensure_data_or_stop()
+
+    # FILTR DAT (inline)
+    df = add__date_column(df)
+    if "__date" in df.columns and df["__date"].notna().any():
+        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
+        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="indy_date")
+        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
+        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
+        df_all = df.loc[mask_d].copy()
+    else:
+        df_all = df.copy()
+
 
     # Podzbiory
     df_bar  = _exclude_caf_vip(df_all)
