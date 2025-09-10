@@ -340,7 +340,7 @@ with tab_pivot:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask_d].copy()
-    dff = _exclude_caf_vip(dff)
+        dff = _exclude_caf_vip(dff)
     else:
         dff = df.copy()
 
