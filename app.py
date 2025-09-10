@@ -488,200 +488,167 @@ with tab_pivot:
             total_qty2 = float(subset2["Quantity"].sum()) if not subset2.empty else 0.0
             st.metric(label="Suma sprzedanych sztuk (po filtrach daty)", value=f"{total_qty2:,.0f}".replace(",", " "))
 
+
 # ---------- Zakładka: Wyniki indywidualne ----------
 with tab_indy:
-    st.subheader("👤 Wyniki indywidualne")
+    st.subheader("👤 Wyniki indywidualne (bez POS: CAF/VIP w części 'bar')")
     df = ensure_data_or_stop()
-    df = add__date_column(df)
 
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        cols = st.columns([1,1,2])
-        with cols[0]:
-            picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="indy_date")
-        with cols[1]:
-            users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-            sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask].copy()
-        dff = _exclude_caf_vip(dff)
+    # FILTR DAT (na pełnym df, potem wydzielimy bar/cafe/vip)
+    df_all = date_filtered(df, key="indy_date")
+
+    # Podzbiory
+    df_bar  = _exclude_caf_vip(df_all)
+    df_cafe = _keep_caf(df_all)
+    df_vip  = _keep_vip(df_all)
+
+    req = {"UserFullName","ProductName","Quantity"}
+    if not req.issubset(df_bar.columns):
+        st.error("Wymagane kolumny: UserFullName, ProductName, Quantity"); st.stop()
+
+    users_all = sorted(df_bar["UserFullName"].dropna().unique())
+    if not users_all:
+        st.info("Brak zleceniobiorców w wybranym zakresie dat.")
     else:
-        st.warning("Brak dat — używam wszystkich wierszy.")
-        dff = df.copy()
-        users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
-        sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user_nodate")
+        user = st.selectbox("Zleceniobiorca", options=users_all, index=0)
 
-    dff["__pnorm"] = dff["ProductName"].map(_norm_key)
-    mask_extra = dff["__pnorm"] == "extranachossauce"
-    mask_base = dff["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
-    mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
-    mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
-    mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
-    mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
+        # Przygotowanie kolumn
+        for frame in (df_bar, df_cafe, df_vip):
+            if "Quantity" in frame.columns:
+                frame["Quantity"] = pd.to_numeric(frame["Quantity"], errors="coerce").fillna(0)
+            if "NetAmount" in frame.columns:
+                frame["NetAmount"] = pd.to_numeric(frame["NetAmount"], errors="coerce")
+            frame["__pnorm"] = frame["ProductName"].map(_norm_key) if "ProductName" in frame.columns else ""
 
-    # KINO
-    try:
-        base_sum = float(dff.loc[mask_base, "Quantity"].sum())
-        extra_sum = float(dff.loc[mask_extra, "Quantity"].sum())
-        pct_extra_cinema = (extra_sum / base_sum * 100) if base_sum else None
+        def avg_per_user(frame, who):
+            if not {"TransactionId","NetAmount"}.issubset(frame.columns):
+                return None, 0
+            f = frame[frame["UserFullName"]==who]
+            if f.empty: return None, 0
+            g = f.groupby("TransactionId")["NetAmount"]
+            per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+            txc = int(f["TransactionId"].nunique())
+            avg = None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
+            return avg, txc
 
-        pop_base_sum = float(dff.loc[mask_base_pop, "Quantity"].sum())
-        pop_flav_sum = float(dff.loc[mask_flavored_pop, "Quantity"].sum())
-        pct_popcorny_cinema = (pop_flav_sum / pop_base_sum * 100) if pop_base_sum else None
+        def avg_cinema(frame):
+            if not {"TransactionId","NetAmount"}.issubset(frame.columns):
+                return None
+            g = frame.groupby("TransactionId")["NetAmount"]
+            per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
+            txc = int(frame["TransactionId"].nunique())
+            return None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
 
-        share_den_sum = float(dff.loc[mask_share_den, "Quantity"].sum())
-        share_num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
-        pct_sharecorn_cinema = (share_num_sum / share_den_sum * 100) if share_den_sum else None
+        # --- Liczby transakcji: bar / cafe / vip
+        _, tx_bar  = avg_per_user(df_bar,  user)
+        _, tx_cafe = avg_per_user(df_cafe, user)
+        _, tx_vip  = avg_per_user(df_vip,  user)
 
-        tx_df_all = dff.copy()
-        if "PosName" in tx_df_all.columns:
-            m_ex = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_all = tx_df_all.loc[~m_ex].copy()
-        if ("TransactionId" in tx_df_all.columns) and ("NetAmount" in tx_df_all.columns):
-            grp_all = tx_df_all.groupby("TransactionId")["NetAmount"]
-            nun_all = grp_all.nunique(dropna=True)
-            s_all = grp_all.sum(min_count=1)
-            f_all = grp_all.first()
-            per_tx_total_all = f_all.where(nun_all <= 1, s_all)
-            global_tx_count = int(tx_df_all["TransactionId"].nunique())
-            global_revenue = float(per_tx_total_all.sum(min_count=1))
-            avg_tr_cinema = (global_revenue / global_tx_count) if global_tx_count else None
-        else:
-            avg_tr_cinema = None
-    except Exception:
-        pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = avg_tr_cinema = None
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Liczba transakcji — bar (bez CAF/VIP)", f"{tx_bar:,}".replace(",", " "))
+        c2.metric("Liczba transakcji — cafe (CAF)", f"{tx_cafe:,}".replace(",", " "))
+        c3.metric("Liczba transakcji — VIP", f"{tx_vip:,}".replace(",", " "))
 
-    # OSOBA
-    dff_u = dff[dff["UserFullName"] == sel_user].copy()
-    try:
-        base_u = float(dff_u.loc[mask_base, "Quantity"].sum())
-        extra_u = float(dff_u.loc[mask_extra, "Quantity"].sum())
-        pct_extra_u = (extra_u / base_u * 100) if base_u else None
+        # --- Średnie transakcji (bar/cafe/vip) dla osoby i kina
+        avg_user_bar, _ = avg_per_user(df_bar, user)
+        avg_user_cafe, _ = avg_per_user(df_cafe, user)
+        avg_user_vip, _  = avg_per_user(df_vip,  user)
 
-        pop_base_u = float(dff_u.loc[mask_base_pop, "Quantity"].sum())
-        pop_flav_u = float(dff_u.loc[mask_flavored_pop, "Quantity"].sum())
-        pct_popcorny_u = (pop_flav_u / pop_base_u * 100) if pop_base_u else None
+        avg_cin_bar  = avg_cinema(df_bar)
+        avg_cin_cafe = avg_cinema(df_cafe)
+        avg_cin_vip  = avg_cinema(df_vip)
 
-        share_den_u = float(dff_u.loc[mask_share_den, "Quantity"].sum())
-        share_num_u = float(dff_u.loc[mask_share_num, "Quantity"].sum())
-        pct_sharecorn_u = (share_num_u / share_den_u * 100) if share_den_u else None
+        # --- Procentowe KPI liczymy jak dotąd na 'bar' (bez POS CAF/VIP)
+        def _pct_local(frame, num_mask, den_mask):
+            if "Quantity" not in frame.columns: return None
+            n = float(frame.loc[num_mask, "Quantity"].sum())
+            d = float(frame.loc[den_mask, "Quantity"].sum())
+            return None if d == 0 else round(n/d*100, 1)
 
-        tx_df_u = dff_u.copy()
-        if "PosName" in tx_df_u.columns:
-            m_ex_u = tx_df_u["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_u = tx_df_u.loc[~m_ex_u].copy()
-        if ("TransactionId" in tx_df_u.columns) and ("NetAmount" in tx_df_u.columns):
-            grp_u = tx_df_u.groupby("TransactionId")["NetAmount"]
-            nun_u = grp_u.nunique(dropna=True)
-            s_u = grp_u.sum(min_count=1)
-            f_u = grp_u.first()
-            per_tx_total_u = f_u.where(nun_u <= 1, s_u)
-            tx_count_u = int(tx_df_u["TransactionId"].nunique())
-            revenue_u = float(per_tx_total_u.sum(min_count=1))
-            avg_tr_u = (revenue_u / tx_count_u) if tx_count_u else None
-        else:
-            avg_tr_u = None; tx_count_u = None
-    except Exception:
-        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = avg_tr_u = None; tx_count_u = None
+        # Dla 'bar'
+        pnorm = df_bar["__pnorm"] if "__pnorm" in df_bar.columns else pd.Series([], dtype=str)
+        extra_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.eq("extranachossauce"), pnorm.isin({"tackanachossrednia","tackanachosduza"}))
+        extra_cine = _pct_local(df_bar, pnorm.eq("extranachossauce"), pnorm.isin({"tackanachossrednia","tackanachosduza"}))
 
-    def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
-    def _fmt_pln(x): return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-    def _fmt_diff_pp(u, c):
-        if u is None or c is None: return ""
-        d = u - c; s = "+" if d>=0 else "−"; return f"{s}{abs(d):.1f} p.p."
-    def _fmt_diff_pln(u, c):
-        if u is None or c is None: return ""
-        d = u - c; s = "+" if d>=0 else "−"; v = f"{abs(d):,.2f}".replace(",", " ").replace(".", ","); return f"{s}{v} zł"
+        flav_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.isin(FLAVORED_NORM), pnorm.isin(BASE_POP_NORM))
+        flav_cine = _pct_local(df_bar, pnorm.isin(FLAVORED_NORM), pnorm.isin(BASE_POP_NORM))
 
-    rows = [
-        ["Średnia wartość transakcji", avg_tr_u, avg_tr_cinema, _fmt_diff_pln(avg_tr_u, avg_tr_cinema)],
-        ["% Extra Sos", pct_extra_u, pct_extra_cinema, _fmt_diff_pp(pct_extra_u, pct_extra_cinema)],
-        ["% Popcorny smakowe", pct_popcorny_u, pct_popcorny_cinema, _fmt_diff_pp(pct_popcorny_u, pct_popcorny_cinema)],
-        ["% ShareCorn", pct_sharecorn_u, pct_sharecorn_cinema, _fmt_diff_pp(pct_sharecorn_u, pct_sharecorn_cinema)],
-    ]
-    df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
+        share_user = _pct_local(df_bar[df_bar["UserFullName"]==user], pnorm.isin(SHARE_NUM_NORM), pnorm.isin(SHARE_DEN_NORM))
+        share_cine = _pct_local(df_bar, pnorm.isin(SHARE_NUM_NORM), pnorm.isin(SHARE_DEN_NORM))
 
-    st.markdown("#### Zestawienie")
-    tx_label = "-" if tx_count_u is None else f"{tx_count_u:,}".replace(",", " ")
-    st.metric("Liczba transakcji (osoba)", tx_label)
-    disp = df_view.copy()
-    disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]] = disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]].applymap(_fmt_pln)
-    mask_pct = disp["Wskaźnik"] != "Średnia wartość transakcji"
-    disp.loc[mask_pct, [sel_user, "Średnia kina"]] = disp.loc[mask_pct, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
-    st.dataframe(disp, use_container_width=True, hide_index=True)
+        # --- Tabela wyników
+        disp = pd.DataFrame({
+            "Wskaźnik": [
+                "Średnia wartość transakcji (bar)",
+                "Średnia wartość transakcji cafe",
+                "Średnia wartość transakcji vip",
+                "% Extra Sos",
+                "% Popcorny smakowe",
+                "% ShareCorn"
+            ],
+            user: [
+                avg_user_bar, avg_user_cafe, avg_user_vip,
+                extra_user, flav_user, share_user
+            ],
+            "Średnia kina": [
+                avg_cin_bar, avg_cin_cafe, avg_cin_vip,
+                extra_cine, flav_cine, share_cine
+            ],
+        })
 
-    # Wykresy
-    st.markdown("### 📊 Wykresy porównawcze")
-    _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
+        def _fmt_row(i, v):
+            if i in (0,1,2):  # trzy pierwsze wiersze w PLN
+                return "" if pd.isna(v) else fmt_pln(float(v))
+            else:
+                return "" if pd.isna(v) else f"{float(v):.1f} %"
 
-    # Pieniądze
-    val_user = avg_tr_u if avg_tr_u is not None else 0.0
-    val_kino = avg_tr_cinema if avg_tr_cinema is not None else 0.0
-    _color_user = _gray
-    if avg_tr_u is not None and avg_tr_cinema is not None:
-        _color_user = _green if avg_tr_u >= avg_tr_cinema else _red
-    _diff_money = ""
-    if avg_tr_u is not None and avg_tr_cinema is not None:
-        d = avg_tr_u - avg_tr_cinema
-        s = "+" if d >= 0 else "−"
-        _diff_money = s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
-    df_chart_money = pd.DataFrame([
-        {"Kto": sel_user, "Wartość": val_user, "kolor": _color_user, "label": _diff_money, "label_color": _color_user},
-        {"Kto": "Średnia kina", "Wartość": val_kino, "kolor": _gray, "label": "", "label_color": _gray},
-    ])
-    base_money = alt.Chart(df_chart_money)
-    bars_money = base_money.mark_bar(size=28).encode(
-        x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-        y=alt.Y("Wartość:Q", title="zł"),
-        color=alt.Color("kolor:N", legend=None, scale=None),
-        tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=",.2f")]
-    )
-    labels_money = base_money.mark_text(dy=-6, size=18).encode(
-        x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-        y=alt.Y("Wartość:Q"),
-        text=alt.Text("label:N"),
-        color=alt.Color("label_color:N", legend=None, scale=None)
-    )
-    ref_df = pd.DataFrame({"ref":[val_kino]})
-    rule_money = alt.Chart(ref_df).mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="ref:Q")
-    chart_money = (bars_money + labels_money + rule_money).properties(width=780, height=450)
-    st.altair_chart(chart_money, use_container_width=False)
+        formatted = disp.copy()
+        formatted[user] = [ _fmt_row(i, v) for i, v in enumerate(disp[user]) ]
+        formatted["Średnia kina"] = [ _fmt_row(i, v) for i, v in enumerate(disp["Średnia kina"]) ]
+        st.dataframe(formatted, use_container_width=True, hide_index=True)
 
-    # Wskaźniki % (facet)
-    st.caption("Wskaźniki procentowe")
-    metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-    user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
-    cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
-    rows = []
-    for m, u, c in zip(metrics, user_vals, cinema_vals):
-        uval = 0.0 if u is None else u
-        cval = 0.0 if c is None else c
-        ucol = _gray if (u is None or c is None) else (_green if uval >= cval else _red)
-        label = ""
-        if u is not None and c is not None:
-            d = uval - cval
-            s = "+" if d >= 0 else "−"
-            label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-        rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol})
-        rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray})
-    df_chart_pct = pd.DataFrame(rows)
-    base_pct = alt.Chart(df_chart_pct)
-    bars_pct = base_pct.mark_bar(size=28).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q", title="%"),
-        color=alt.Color("kolor:N", legend=None, scale=None),
-        tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-    )
-    labels_pct = base_pct.mark_text(dy=-6, size=16).encode(
-        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-        y=alt.Y("Wartość:Q"),
-        text=alt.Text("diff_label:N"),
-        color=alt.Color("label_color:N", legend=None, scale=None)
-    )
-    rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="Wartość:Q")
-    chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
-    st.altair_chart(chart_pct, use_container_width=True)
+        # --- Wykresy: średnie transakcji cafe i vip
+        def bar_with_ref(val_user, val_cine, title):
+            if val_user is None and val_cine is None:
+                st.info(f"Brak danych: {title}")
+                return
+            dfc = pd.DataFrame({
+                "Kto": [user, "Średnia kina"],
+                "Wartość": [val_user, val_cine]
+            })
+            # Kolory: zielony gdy powyżej średniej, czerwony poniżej
+            dfc["kolor"] = ["powyżej" if (val_user is not None and val_cine is not None and val_user > val_cine) else "poniżej", "średnia"]
+            base = alt.Chart(dfc).mark_bar().encode(
+                x=alt.X("Kto:N", sort=None),
+                y=alt.Y("Wartość:Q"),
+                color=alt.condition(
+                    alt.datum.Kto == user,
+                    alt.Color("kolor:N", scale=alt.Scale(domain=["powyżej","poniżej","średnia"], range=["#16a34a","#dc2626","#9ca3af"]), legend=None),
+                    alt.value("#9ca3af")
+                )
+            ).properties(title=title, width=450, height=320)
+
+            # Linia odniesienia
+            if val_cine is not None:
+                rule = alt.Chart(pd.DataFrame({"y":[val_cine]})).mark_rule(strokeDash=[6,4], color="#6b7280").encode(y="y:Q")
+                base = base + rule
+
+            # Etykieta różnicy nad słupkiem użytkownika
+            if val_user is not None and val_cine is not None:
+                diff = round(val_user - val_cine, 2)
+                label = f"+{diff}" if diff>0 else f"{diff}"
+                text = alt.Chart(pd.DataFrame({"Kto":[user], "Wartość":[max(val_user, val_cine)], "label":[label]})).mark_text(
+                    dy=-10
+                ).encode(x="Kto:N", y=alt.Y("Wartość:Q"), text="label:N")
+                base = base + text
+
+            st.altair_chart(base, use_container_width=False)
+
+        st.markdown("#### Wykres — Średnia wartość transakcji (cafe)")
+        bar_with_ref(avg_user_cafe, avg_cin_cafe, "Średnia wartość transakcji — cafe")
+
+        st.markdown("#### Wykres — Średnia wartość transakcji (VIP)")
+        bar_with_ref(avg_user_vip, avg_cin_vip, "Średnia wartość transakcji — VIP")
 
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
