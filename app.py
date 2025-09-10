@@ -649,7 +649,8 @@ with tab_indy:
     
     # Ukryj wiersze bez danych dla wybranej osoby (np. brak danych w segmencie cafe/VIP)
     df_view = df_view[df_view[sel_user].notna()].copy()
-st.markdown("#### Zestawienie")
+    
+    st.markdown("#### Zestawienie")
     # Trzy metryki: bar / cafe / vip
     def _count_tx(frame, user):
         if "TransactionId" not in frame.columns: return None
