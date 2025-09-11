@@ -591,6 +591,14 @@ with tab_indy:
         if "PosName" in tx_df_all.columns:
             m_ex = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
             tx_df_all = tx_df_all.loc[~m_ex].copy()
+
+        # % Zestawy — kino (licznik: zestawy; mianownik: liczba transakcji bar)
+        try:
+            sets_sum_cin = float(dff.loc[mask_sets, "Quantity"].sum())
+        except Exception:
+            sets_sum_cin = 0.0
+        sets_den_cin = int(tx_df_all["TransactionId"].nunique()) if "TransactionId" in tx_df_all.columns else 0
+        pct_sets_cinema = (sets_sum_cin / sets_den_cin * 100) if sets_den_cin else None
         if ("TransactionId" in tx_df_all.columns) and ("NetAmount" in tx_df_all.columns):
             grp_all = tx_df_all.groupby("TransactionId")["NetAmount"]
             nun_all = grp_all.nunique(dropna=True)
@@ -633,10 +641,17 @@ with tab_indy:
             tx_count_u = int(tx_df_u["TransactionId"].nunique())
             revenue_u = float(per_tx_total_u.sum(min_count=1))
             avg_tr_u = (revenue_u / tx_count_u) if tx_count_u else None
+
+        # % Zestawy — użytkownik (licznik: zestawy; mianownik: liczba transakcji bar użytkownika)
+        try:
+            sets_sum_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
+        except Exception:
+            sets_sum_u = 0.0
+        pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
         else:
             avg_tr_u = None; tx_count_u = None
     except Exception:
-        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = avg_tr_u = None; tx_count_u = None
+        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = avg_tr_u = None; tx_count_u = None; pct_sets_u = None
 
     def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
     def _fmt_pln(x): return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
@@ -690,8 +705,8 @@ with tab_indy:
         ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
         ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
         ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
-    ]
-    df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
+        ["% Zestawy",             pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
+    ]df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
     
     # Ukryj wiersze bez danych dla wybranej osoby (np. brak danych w segmencie cafe/VIP)
