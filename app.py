@@ -377,7 +377,7 @@ with tab_pivot:
     mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
     
     mask_sets = dff["__pnorm"].isin(SETS_NORM)
-flavored_qty = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
+    flavored_qty = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     base_pop_qty = dff.loc[mask_base_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     pct_popcorny = (flavored_qty / base_pop_qty.replace(0, pd.NA) * 100).astype("Float64").round(1)
 
@@ -434,7 +434,7 @@ flavored_qty = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].su
     result["% ShareCorn"] = pct_sharecorn
     
     result["% Zestawy"] = pct_sets
-order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy"]
+    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy"]
     
     result = result[order]
     result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
