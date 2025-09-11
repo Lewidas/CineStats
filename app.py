@@ -560,7 +560,7 @@ with tab_indy:
     mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
     
     mask_sets = dff["__pnorm"].isin(SETS_NORM)
-mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
+    mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
 
     # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
