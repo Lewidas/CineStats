@@ -451,7 +451,7 @@ with tab_pivot:
         sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
         sets_den = int(tx_df["TransactionId"].nunique()) if "TransactionId" in tx_df.columns else 0
         pct_sets_c = (sets_sum / sets_den * 100) if sets_den else None
-if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
+    if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
             grp_all = tx_df.groupby("TransactionId")["NetAmount"]
             nun_all = grp_all.nunique(dropna=True)
             s_all = grp_all.sum(min_count=1)
