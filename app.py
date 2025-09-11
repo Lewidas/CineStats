@@ -907,7 +907,7 @@ with tab_best:
     tbl_extra = (extra / base.replace(0, pd.NA) * 100).astype("Float64")
     avg_extra = (float(dff.loc[mask_extra, "Quantity"].sum()) / float(dff.loc[mask_base, "Quantity"].sum()) * 100) if dff.loc[mask_base, "Quantity"].sum() else None
     df_extra = pd.DataFrame({"Wartość": tbl_extra, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
-df_extra = df_extra.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
+    df_extra = df_extra.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % Extra Sos")
     if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
     st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True, hide_index=True)
@@ -918,7 +918,7 @@ df_extra = df_extra.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca
     tbl_pop = (flavored / base_pop.replace(0, pd.NA) * 100).astype("Float64")
     avg_pop = (float(dff.loc[mask_flavored_pop, "Quantity"].sum()) / float(dff.loc[mask_base_pop, "Quantity"].sum()) * 100) if dff.loc[mask_base_pop, "Quantity"].sum() else None
     df_pop = pd.DataFrame({"Wartość": tbl_pop, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
-df_pop = df_pop.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
+    df_pop = df_pop.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % Popcorny smakowe")
     if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
     st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True, hide_index=True)
@@ -930,7 +930,7 @@ df_pop = df_pop.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","L
     den_sum = float(dff.loc[mask_share_den, "Quantity"].sum()); num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
     avg_share = (num_sum / den_sum * 100) if den_sum else None
     df_share = pd.DataFrame({"Wartość": tbl_share, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
-df_share = df_share.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
+    df_share = df_share.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % ShareCorn")
     if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
     st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True, hide_index=True)
@@ -957,7 +957,7 @@ df_share = df_share.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca
         avg_global = (global_revenue / global_tx_count) if global_tx_count else None
 
         df_avg = pd.DataFrame({"Wartość": avg_by_user.reindex(users_sorted), "Liczba transakcji bar": tx_count_by_user.reindex(users_sorted, fill_value=0).astype("Int64")}).sort_values("Wartość", ascending=False, na_position="last")
-df_avg = df_avg.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
+        df_avg = df_avg.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
         def _fmt_pln(x):
             if pd.isna(x): return ""
             s = f"{x:,.2f}".replace(",", " ").replace(".", ","); return s + " zł"
