@@ -377,6 +377,16 @@ with tab_pivot:
     # % ShareCorn
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
+
+    # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
+    tx_bar_df = dff.copy()
+    if "PosName" in tx_bar_df.columns:
+        _m_ex_bar = tx_bar_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        tx_bar_df = tx_bar_df.loc[~_m_ex_bar].copy()
+    if "TransactionId" in tx_bar_df.columns:
+        tx_bar_count_by_user = tx_bar_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype("Int64")
+    else:
+        tx_bar_count_by_user = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
     share_num_qty = dff.loc[mask_share_num].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     share_den_qty = dff.loc[mask_share_den].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     pct_sharecorn = (share_num_qty / share_den_qty.replace(0, pd.NA) * 100).astype("Float64").round(1)
@@ -534,6 +544,16 @@ with tab_indy:
     mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
+
+    # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
+    tx_bar_df = dff.copy()
+    if "PosName" in tx_bar_df.columns:
+        _m_ex_bar = tx_bar_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        tx_bar_df = tx_bar_df.loc[~_m_ex_bar].copy()
+    if "TransactionId" in tx_bar_df.columns:
+        tx_bar_count_by_user = tx_bar_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype("Int64")
+    else:
+        tx_bar_count_by_user = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
 
     # KINO
     try:
@@ -858,6 +878,16 @@ with tab_best:
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
 
+    # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
+    tx_bar_df = dff.copy()
+    if "PosName" in tx_bar_df.columns:
+        _m_ex_bar = tx_bar_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        tx_bar_df = tx_bar_df.loc[~_m_ex_bar].copy()
+    if "TransactionId" in tx_bar_df.columns:
+        tx_bar_count_by_user = tx_bar_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype("Int64")
+    else:
+        tx_bar_count_by_user = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
+
     def style_over_avg(df_in: pd.DataFrame, avg_val: float, is_pct: bool) -> pd.io.formats.style.Styler:
         def _fmt_pct(x): return "" if pd.isna(x) else f"{x:.1f} %"
         def _fmt_pln(x):
@@ -876,20 +906,22 @@ with tab_best:
     base = dff.loc[mask_base].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     tbl_extra = (extra / base.replace(0, pd.NA) * 100).astype("Float64")
     avg_extra = (float(dff.loc[mask_extra, "Quantity"].sum()) / float(dff.loc[mask_base, "Quantity"].sum()) * 100) if dff.loc[mask_base, "Quantity"].sum() else None
-    df_extra = pd.DataFrame({"Wartość": tbl_extra}).sort_values("Wartość", ascending=False, na_position="last")
+    df_extra = pd.DataFrame({"Wartość": tbl_extra, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
+df_extra = df_extra.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % Extra Sos")
     if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
-    st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True)
+    st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True, hide_index=True)
 
     # % Popcorny smakowe
     flavored = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     base_pop = dff.loc[mask_base_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     tbl_pop = (flavored / base_pop.replace(0, pd.NA) * 100).astype("Float64")
     avg_pop = (float(dff.loc[mask_flavored_pop, "Quantity"].sum()) / float(dff.loc[mask_base_pop, "Quantity"].sum()) * 100) if dff.loc[mask_base_pop, "Quantity"].sum() else None
-    df_pop = pd.DataFrame({"Wartość": tbl_pop}).sort_values("Wartość", ascending=False, na_position="last")
+    df_pop = pd.DataFrame({"Wartość": tbl_pop, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
+df_pop = df_pop.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % Popcorny smakowe")
     if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
-    st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True)
+    st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True, hide_index=True)
 
     # % ShareCorn
     share_num_qty = dff.loc[mask_share_num].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
@@ -897,10 +929,11 @@ with tab_best:
     tbl_share = (share_num_qty / share_den_qty.replace(0, pd.NA) * 100).astype("Float64")
     den_sum = float(dff.loc[mask_share_den, "Quantity"].sum()); num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
     avg_share = (num_sum / den_sum * 100) if den_sum else None
-    df_share = pd.DataFrame({"Wartość": tbl_share}).sort_values("Wartość", ascending=False, na_position="last")
+    df_share = pd.DataFrame({"Wartość": tbl_share, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
+df_share = df_share.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % ShareCorn")
     if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
-    st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True)
+    st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True, hide_index=True)
 
     # Średnia wartość transakcji
     tx_df = dff.copy()
@@ -923,7 +956,8 @@ with tab_best:
         global_revenue = float(per_tx_total_all.sum(min_count=1))
         avg_global = (global_revenue / global_tx_count) if global_tx_count else None
 
-        df_avg = pd.DataFrame({"Wartość": avg_by_user.reindex(users_sorted)}).sort_values("Wartość", ascending=False, na_position="last")
+        df_avg = pd.DataFrame({"Wartość": avg_by_user.reindex(users_sorted), "Liczba transakcji bar": tx_count_by_user.reindex(users_sorted, fill_value=0).astype("Int64")}).sort_values("Wartość", ascending=False, na_position="last")
+df_avg = df_avg.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
         def _fmt_pln(x):
             if pd.isna(x): return ""
             s = f"{x:,.2f}".replace(",", " ").replace(".", ","); return s + " zł"
@@ -932,7 +966,7 @@ with tab_best:
             except Exception: return ""
         sty = df_avg.style.applymap(_color, subset=["Wartość"]).format({"Wartość": _fmt_pln})
         if avg_global is not None: st.caption(f"Średnia kina: **{avg_global:,.2f} zł**".replace(",", " ").replace(".", ","))
-        st.dataframe(sty, use_container_width=True)
+        st.dataframe(sty, use_container_width=True, hide_index=True)
     else:
         st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
 
