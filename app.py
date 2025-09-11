@@ -259,7 +259,9 @@ SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
 # =============== TABS (podstrony) ===============
-tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats"])
+tab_dane, tab_pivot, tab_indy, tab_best, tab_comp = st.tabs(
+    ["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów"]
+)
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
@@ -300,31 +302,6 @@ def ensure_data_or_stop():
         st.stop()
     return df
 
-
-# ---------- POS helpers (CAF/VIP) ----------
-def _exclude_caf_vip(df: pd.DataFrame) -> pd.DataFrame:
-    """Usuwa wiersze z PosName zawierającym CAF lub VIP (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
-        return df.loc[~m].copy()
-    return df.copy()
-
-def _keep_caf(df: pd.DataFrame) -> pd.DataFrame:
-    """Zostawia tylko wiersze z PosName zawierającym CAF (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("CAF", case=False, regex=True, na=False)
-        return df.loc[m].copy()
-    return df.iloc[0:0].copy()
-
-def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
-    """Zostawia tylko wiersze z PosName zawierającym VIP (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("VIP", case=False, regex=True, na=False)
-        return df.loc[m].copy()
-    return df.iloc[0:0].copy()
-
-
-
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
     st.subheader("📈 Tabela wskaźników")
@@ -338,17 +315,8 @@ with tab_pivot:
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask_d].copy()
-        dff = _exclude_caf_vip(dff)
     else:
-        df_all = df.copy()
-
-        bar_df  = _exclude_caf_vip(df_all)
-
-        cafe_df = _keep_caf(df_all)
-
-        vip_df  = _keep_vip(df_all)
-
-        dff = bar_df
+        dff = df.copy()
 
     required = {"UserFullName", "ProductName", "Quantity"}
     if not required.issubset(dff.columns):
@@ -512,15 +480,7 @@ with tab_indy:
             sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        df_all = df.loc[mask].copy()
-
-        bar_df  = _exclude_caf_vip(df_all)
-
-        cafe_df = _keep_caf(df_all)
-
-        vip_df  = _keep_vip(df_all)
-
-        dff = bar_df
+        dff = df.loc[mask].copy()
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
@@ -609,79 +569,22 @@ with tab_indy:
         if u is None or c is None: return ""
         d = u - c; s = "+" if d>=0 else "−"; v = f"{abs(d):,.2f}".replace(",", " ").replace(".", ","); return f"{s}{v} zł"
 
-    
-    # --- Averages for bar/cafe/vip (user & cinema)
-    def _avg_user_for(frame, user):
-        if not {"TransactionId","NetAmount","UserFullName"}.issubset(frame.columns):
-            return None
-        f = frame[frame["UserFullName"] == user]
-        if f.empty: return None
-        g = f.groupby("TransactionId")["NetAmount"]
-        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
-        txc = int(f["TransactionId"].nunique())
-        return None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
-
-    def _avg_cinema_for(frame):
-        if not {"TransactionId","NetAmount"}.issubset(frame.columns):
-            return None
-        g = frame.groupby("TransactionId")["NetAmount"]
-        per_tx = g.first().where(g.nunique(dropna=True) <= 1, g.sum(min_count=1))
-        txc = int(frame["TransactionId"].nunique())
-        return None if txc==0 else round(float(per_tx.sum(min_count=1))/txc, 2)
-
-    avg_tr_bar_u = avg_tr_u
-    avg_tr_bar_cinema = avg_tr_cinema
-    avg_tr_cafe_u = _avg_user_for(cafe_df, sel_user)
-    avg_tr_cafe_cinema = _avg_cinema_for(cafe_df)
-    avg_tr_vip_u = _avg_user_for(vip_df, sel_user)
-    avg_tr_vip_cinema = _avg_cinema_for(vip_df)
-
-    
-
-    # Dostępność danych dla wykresów
-    has_bar  = (avg_tr_bar_u is not None)
-    has_cafe = (avg_tr_cafe_u is not None)
-    has_vip  = (avg_tr_vip_u is not None)
-    has_any_money = has_bar or has_cafe or has_vip
-    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
-    
     rows = [
-        ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
-        ["Średnia wartość transakcji cafe", avg_tr_cafe_u, avg_tr_cafe_cinema, _fmt_diff_pln(avg_tr_cafe_u, avg_tr_cafe_cinema)],
-        ["Średnia wartość transakcji vip",  avg_tr_vip_u,  avg_tr_vip_cinema,  _fmt_diff_pln(avg_tr_vip_u,  avg_tr_vip_cinema)],
-        ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
-        ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
-        ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
+        ["Średnia wartość transakcji", avg_tr_u, avg_tr_cinema, _fmt_diff_pln(avg_tr_u, avg_tr_cinema)],
+        ["% Extra Sos", pct_extra_u, pct_extra_cinema, _fmt_diff_pp(pct_extra_u, pct_extra_cinema)],
+        ["% Popcorny smakowe", pct_popcorny_u, pct_popcorny_cinema, _fmt_diff_pp(pct_popcorny_u, pct_popcorny_cinema)],
+        ["% ShareCorn", pct_sharecorn_u, pct_sharecorn_cinema, _fmt_diff_pp(pct_sharecorn_u, pct_sharecorn_cinema)],
     ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
-    
-    # Ukryj wiersze bez danych dla wybranej osoby (np. brak danych w segmencie cafe/VIP)
-    df_view = df_view[df_view[sel_user].notna()].copy()
-    
     st.markdown("#### Zestawienie")
-    # Trzy metryki: bar / cafe / vip
-    def _count_tx(frame, user):
-        if "TransactionId" not in frame.columns: return None
-        sub = frame[frame.get("UserFullName","") == user]
-        return int(sub["TransactionId"].nunique()) if not sub.empty else 0
-    tx_bar  = _count_tx(bar_df,  sel_user)
-    tx_cafe = _count_tx(cafe_df, sel_user)
-    tx_vip  = _count_tx(vip_df,  sel_user)
-    c1,c2,c3 = st.columns(3)
-    def _fmt_int(x):
-        return "-" if (x is None) else f"{x:,}".replace(",", " ")
-    c1.metric("Liczba transakcji — bar (bez CAF/VIP)", _fmt_int(tx_bar))
-    c2.metric("Liczba transakcji — cafe (CAF)", _fmt_int(tx_cafe))
-    c3.metric("Liczba transakcji — VIP", _fmt_int(tx_vip))
-
-    # Formatowanie tabeli: PLN dla 3 pierwszych wierszy, % dla reszty
+    tx_label = "-" if tx_count_u is None else f"{tx_count_u:,}".replace(",", " ")
+    st.metric("Liczba transakcji (osoba)", tx_label)
     disp = df_view.copy()
-    money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
-    disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
-    disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
+    disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]] = disp.loc[disp["Wskaźnik"] == "Średnia wartość transakcji", [sel_user, "Średnia kina"]].applymap(_fmt_pln)
+    mask_pct = disp["Wskaźnik"] != "Średnia wartość transakcji"
+    disp.loc[mask_pct, [sel_user, "Średnia kina"]] = disp.loc[mask_pct, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
     st.dataframe(disp, use_container_width=True, hide_index=True)
-
 
     # Wykresy
     st.markdown("### 📊 Wykresy porównawcze")
@@ -717,109 +620,43 @@ with tab_indy:
     )
     ref_df = pd.DataFrame({"ref":[val_kino]})
     rule_money = alt.Chart(ref_df).mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="ref:Q")
-    
-    # Trzy wykresy obok siebie: bar / cafe / VIP
-    def _money_df(orig_user, orig_kino):
-        # build DF + colors + diff label
-        _u = 0.0 if orig_user is None else float(orig_user)
-        _k = 0.0 if orig_kino is None else float(orig_kino)
-        _col = _gray
-        if (orig_user is not None) and (orig_kino is not None):
-            _col = _green if orig_user >= orig_kino else _red
-        _lab = ""
-        if (orig_user is not None) and (orig_kino is not None):
-            d = orig_user - orig_kino
+    chart_money = (bars_money + labels_money + rule_money).properties(width=780, height=450)
+    st.altair_chart(chart_money, use_container_width=False)
+
+    # Wskaźniki % (facet)
+    st.caption("Wskaźniki procentowe")
+    metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
+    user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
+    cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
+    rows = []
+    for m, u, c in zip(metrics, user_vals, cinema_vals):
+        uval = 0.0 if u is None else u
+        cval = 0.0 if c is None else c
+        ucol = _gray if (u is None or c is None) else (_green if uval >= cval else _red)
+        label = ""
+        if u is not None and c is not None:
+            d = uval - cval
             s = "+" if d >= 0 else "−"
-            _lab = s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
-        return pd.DataFrame([
-            {"Kto": sel_user, "Wartość": _u, "kolor": _col, "label": _lab, "label_color": _col},
-            {"Kto": "Średnia kina", "Wartość": _k, "kolor": _gray, "label": "", "label_color": _gray},
-        ])
-
-    def _money_chart(df_local):
-        base = alt.Chart(df_local)
-        bars = base.mark_bar(size=28).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q", title="zł"),
-            color=alt.Color("kolor:N", legend=None, scale=None),
-            tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=",.2f")]
-        )
-        labels = base.mark_text(dy=-6, size=16).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q"),
-            text=alt.Text("label:N"),
-            color=alt.Color("label_color:N", legend=None, scale=None)
-        )
-        ref = alt.Chart(pd.DataFrame({"ref":[float(df_local.loc[df_local['Kto']=='Średnia kina','Wartość'].iloc[0])] })).mark_rule(
-            strokeDash=[6,4], color=_gray, opacity=0.8
-        ).encode(y="ref:Q")
-        return (bars + labels + ref).properties(width=360, height=320)
-
-    
-    # Renderuj tylko wykresy z danymi użytkownika
-    charts = []
-    if has_bar:
-        charts.append(("Średnia wartość transakcji — bar", avg_tr_u, avg_tr_cinema))
-    if has_cafe:
-        charts.append(("Średnia wartość transakcji — cafe", avg_tr_cafe_u, avg_tr_cafe_cinema))
-    if has_vip:
-        charts.append(("Średnia wartość transakcji — VIP", avg_tr_vip_u, avg_tr_vip_cinema))
-
-    if charts:
-        cols = st.columns(len(charts))
-        for col, (title, uval, cval) in zip(cols, charts):
-            with col:
-                st.markdown(f"#### {title}")
-                df_local = _money_df(uval, cval)
-                st.altair_chart(_money_chart(df_local), use_container_width=False)
-    else:
-        st.info("Brak danych do wykresów średniej wartości transakcji dla wybranej osoby.")
-
-# Wskaźniki % (facet)
-    if has_pct:
-        st.caption("Wskaźniki procentowe")
-        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
-        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
-        rows = []
-        for m, u, c in zip(metrics, user_vals, cinema_vals):
-            if u is None:
-                continue  # pomiń wykres dla wskaźnika bez danych użytkownika
-            uval = u
-            cval = 0.0 if c is None else c
-            _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
-            ucol = _gray if (c is None) else (_green if uval >= cval else _red)
-            label = ""
-            if c is not None:
-                d = uval - cval
-                s = "+" if d >= 0 else "−"
-                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-            rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": float(uval), "kolor": ucol, "diff_label": label, "label_color": ucol})
-            rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": float(cval), "kolor": _gray, "diff_label": "", "label_color": _gray})
-
-        if rows:
-            df_chart_pct = pd.DataFrame(rows)
-            base_pct = alt.Chart(df_chart_pct)
-            bars_pct = base_pct.mark_bar(size=28).encode(
-                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-                y=alt.Y("Wartość:Q", title="%"),
-                color=alt.Color("kolor:N", legend=None, scale=None),
-                tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-            )
-            labels_pct = base_pct.mark_text(dy=-6, size=18).encode(
-                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-                y=alt.Y("Wartość:Q"),
-                text=alt.Text("diff_label:N"),
-                color=alt.Color("label_color:N", legend=None, scale=None)
-            )
-            rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
-            chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
-            st.altair_chart(chart_pct, use_container_width=True)
-        else:
-            st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
-    else:
-        st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
-
+            label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
+        rows.append({"Wskaźnik": m, "Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol})
+        rows.append({"Wskaźnik": m, "Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray})
+    df_chart_pct = pd.DataFrame(rows)
+    base_pct = alt.Chart(df_chart_pct)
+    bars_pct = base_pct.mark_bar(size=28).encode(
+        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
+        y=alt.Y("Wartość:Q", title="%"),
+        color=alt.Color("kolor:N", legend=None, scale=None),
+        tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
+    )
+    labels_pct = base_pct.mark_text(dy=-6, size=16).encode(
+        x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
+        y=alt.Y("Wartość:Q"),
+        text=alt.Text("diff_label:N"),
+        color=alt.Color("label_color:N", legend=None, scale=None)
+    )
+    rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color=_gray, opacity=0.8).encode(y="Wartość:Q")
+    chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
+    st.altair_chart(chart_pct, use_container_width=True)
 
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
@@ -832,15 +669,7 @@ with tab_best:
         picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="best_date")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        df_all = df.loc[mask].copy()
-
-        bar_df  = _exclude_caf_vip(df_all)
-
-        cafe_df = _keep_caf(df_all)
-
-        vip_df  = _keep_vip(df_all)
-
-        dff = bar_df
+        dff = df.loc[mask].copy()
     else:
         dff = df.copy()
 
@@ -947,15 +776,7 @@ with tab_comp:
         picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="contest_date")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        df_all = df.loc[mask].copy()
-
-        bar_df  = _exclude_caf_vip(df_all)
-
-        cafe_df = _keep_caf(df_all)
-
-        vip_df  = _keep_vip(df_all)
-
-        dff = bar_df
+        dff = df.loc[mask].copy()
     else:
         dff = df.copy()
 
@@ -1010,10 +831,10 @@ with tab_comp:
         den_prod = st.selectbox("Produkt dla mianownika", options=products_all_ext, placeholder="Wybierz produkt...", key="contest_den_prod")
     if den_mode == "Liczba transakcji":
         st.caption("Liczba unikatowych TransactionId po wykluczeniu POS: Bonarka CAF1/VIP1.")
-
-
     # Minimalna liczba transakcji (próg kwalifikacji)
     min_tx = st.number_input("Minimalna liczba transakcji", min_value=0, value=0, step=1)
+
+
     if st.button("🧮 Oblicz ranking", type="primary"):
         pairs = []
         for prod, pts in zip(st.session_state["contest_products"], st.session_state["contest_points"]):
@@ -1060,8 +881,7 @@ with tab_comp:
         tx_count_all = (tx_df_all.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0)
                         if "TransactionId" in tx_df_all.columns else pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64"))
 
-        
-        # Zbuduj pełny ranking (bez minimum), następnie podziel wg progu min_tx
+                # Zbuduj pełny ranking (bez minimum), następnie podziel wg progu min_tx
         out_full = pd.DataFrame({
             "Wynik": res,
             "Wynik (%)": wynik_pct,
@@ -1089,7 +909,8 @@ with tab_comp:
 
         def _row_style_top3(row):
             try:
-                mm = int(str(row["Miejsce"]).split()[0])
+                import re as _re
+                mm = int(_re.match(r"\d+", str(row["Miejsce"]))[0])
             except Exception:
                 return [""] * len(row)
             if mm == 1: style = "background-color:#fff4b8; font-weight:700"
@@ -1104,6 +925,28 @@ with tab_comp:
         try: sty_ok = sty_ok.hide(axis="index")
         except Exception: pass
         st.dataframe(sty_ok, use_container_width=True, hide_index=True)
+
+        # Eksport XLSX — zwycięzcy (tuż pod główną tabelą)
+        try:
+            buf_ok = io.BytesIO()
+            export_ok = out_ok.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
+            with pd.ExcelWriter(buf_ok, engine="xlsxwriter") as writer:
+                export_ok.to_excel(writer, index=False, sheet_name="Ranking")
+                wb = writer.book; ws = writer.sheets["Ranking"]
+                fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                fmt_num = wb.add_format({"num_format": "0.00"})
+                fmt_int = wb.add_format({"num_format": "0"})
+                ws.set_column("A:A", 9, fmt_int)
+                ws.set_column("B:B", 28)
+                ws.set_column("C:C", 12, fmt_pct)
+                ws.set_column("D:D", 16, fmt_num)
+                ws.set_column("E:E", 14, fmt_num)
+                ws.set_column("F:F", 13, fmt_int)
+                ws.set_row(0, None, wb.add_format({"bold": True}))
+            st.download_button("⬇️ Pobierz ranking xlsx", data=buf_ok.getvalue(),
+                               file_name="Konkurs_ranking.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as ex:
+            st.warning(f"Nie udało się przygotować eksportu XLSX (ranking): {ex}")
 
         # --- Tabela poniżej progu (bez kolorów i medali) ---
         if not out_low.empty:
@@ -1131,244 +974,44 @@ with tab_comp:
                     ws.set_column("E:E", 14, fmt_num)
                     ws.set_column("F:F", 13, fmt_int)
                     ws.set_row(0, None, wb.add_format({"bold": True}))
-                st.download_button("⬇️ Pobierz 'poniżej progu' (XLSX)", data=buf_low.getvalue(),
+                st.download_button("⬇️ Pobierz poniżej progu", data=buf_low.getvalue(),
                                    file_name="Konkurs_ponizej_progu.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             except Exception as ex:
                 st.warning(f"Nie udało się przygotować eksportu XLSX (poniżej progu): {ex}")
 
-        # Eksport XLSX — zwycięzcy
+        # --- Eksport łączny (obie tabele do jednego pliku) ---
         try:
-            buf = io.BytesIO()
-            export_df = out_ok.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False, sheet_name="Ranking")
-                wb = writer.book; ws = writer.sheets["Ranking"]
+            buf_all = io.BytesIO()
+            with pd.ExcelWriter(buf_all, engine="xlsxwriter") as writer:
+                # Ranking
+                export_ok2 = out_ok.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
+                export_ok2.to_excel(writer, index=False, sheet_name="Ranking")
+                wb = writer.book
+                # formaty wspólne
                 fmt_pct = wb.add_format({"num_format": "0.0 %"})
                 fmt_num = wb.add_format({"num_format": "0.00"})
                 fmt_int = wb.add_format({"num_format": "0"})
-                ws.set_column("A:A", 9, fmt_int)
-                ws.set_column("B:B", 28)
-                ws.set_column("C:C", 12, fmt_pct)
-                ws.set_column("D:D", 16, fmt_num)
-                ws.set_column("E:E", 14, fmt_num)
-                ws.set_column("F:F", 13, fmt_int)
-                ws.set_row(0, None, wb.add_format({"bold": True}))
-            st.download_button("⬇️ Pobierz ranking (XLSX)", data=buf.getvalue(),
-                               file_name="Konkurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                ws1 = writer.sheets["Ranking"]
+                ws1.set_column("A:A", 9, fmt_int)
+                ws1.set_column("B:B", 28)
+                ws1.set_column("C:C", 12, fmt_pct)
+                ws1.set_column("D:D", 16, fmt_num)
+                ws1.set_column("E:E", 14, fmt_num)
+                ws1.set_column("F:F", 13, fmt_int)
+                ws1.set_row(0, None, wb.add_format({"bold": True}))
+                # Poniżej progu
+                if 'out_low' in locals() and not out_low.empty:
+                    export_low2 = out_low.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
+                    export_low2.to_excel(writer, index=False, sheet_name="PonizejProgu")
+                    ws2 = writer.sheets["PonizejProgu"]
+                    ws2.set_column("A:A", 9, fmt_int)
+                    ws2.set_column("B:B", 28)
+                    ws2.set_column("C:C", 12, fmt_pct)
+                    ws2.set_column("D:D", 16, fmt_num)
+                    ws2.set_column("E:E", 14, fmt_num)
+                    ws2.set_column("F:F", 13, fmt_int)
+                    ws2.set_row(0, None, wb.add_format({"bold": True}))
+            st.download_button("⬇️ Pobierz całość (XLSX)", data=buf_all.getvalue(),
+                               file_name="Konkurs_calosc.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as ex:
-            st.warning(f"Nie udało się przygotować eksportu XLSX: {ex}")
-        
-
-        # Eksport XLSX
-        try:
-            buf = io.BytesIO()
-            export_df = out.reset_index().rename(columns={"index":"Zleceniobiorca"})[["Miejsce","Zleceniobiorca","Wynik (%)","Licznik (pkt)","Mianownik","Transakcje"]]
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                export_df.to_excel(writer, index=False, sheet_name="Ranking")
-                wb = writer.book; ws = writer.sheets["Ranking"]
-                fmt_pct = wb.add_format({"num_format": "0.0 %"})
-                fmt_num = wb.add_format({"num_format": "0.00"})
-                fmt_int = wb.add_format({"num_format": "0"})
-                ws.set_column("A:A", 9, fmt_int)
-                ws.set_column("B:B", 28)
-                ws.set_column("C:C", 12, fmt_pct)
-                ws.set_column("D:D", 16, fmt_num)
-                ws.set_column("E:E", 14, fmt_num)
-                ws.set_column("F:F", 13, fmt_int)
-                ws.set_row(0, None, wb.add_format({"bold": True}))
-            st.download_button("⬇️ Pobierz ranking (XLSX)", data=buf.getvalue(),
-                               file_name="Konkurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        except Exception as ex:
-            st.warning(f"Nie udało się przygotować eksportu XLSX: {ex}")
-
-
-# ---------- Zakładka: Cafe Stats ----------
-with tab_cafe:
-    st.subheader("☕ Cafe Stats — wszystkie kina (CAF)")
-    df = ensure_data_or_stop()
-    df = add__date_column(df)
-
-    # Zakres dat
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="cafe_date")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask_d].copy()
-    else:
-        dff = df.copy()
-
-    required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
-    if not required.issubset(dff.columns):
-        st.error("Brak wymaganych kolumn do obliczeń CAF: UserFullName, TransactionId, NetAmount, PosName.")
-        st.stop()
-
-    # Filtr: wszystkie rekordy z PosName zawierającym 'CAF'
-    tx_df = _keep_caf(dff)
-
-    if tx_df.empty:
-        st.info("Brak danych dla POS zawierających 'CAF' w wybranym zakresie dat.")
-    else:
-        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
-        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
-        nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
-        per_tx_total = f.where(nun <= 1, s)
-
-        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted)
-        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
-        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
-
-        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
-        nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
-        per_tx_all = f_all.where(nun_all <= 1, s_all)
-        global_tx_count = int(tx_df["TransactionId"].nunique())
-        global_revenue = float(per_tx_all.sum(min_count=1))
-        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
-
-        result = pd.DataFrame(index=users_sorted)
-        result["Liczba transakcji (CAF)"] = tx_count_by_user.astype("Int64")
-        result["Średnia wartość transakcji (CAF)"] = avg_by_user
-        result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2) if avg_global is not None else pd.NA
-
-        result_sorted = result.sort_values(by="Średnia wartość transakcji (CAF)", ascending=False, na_position="last")
-
-        summary_row = pd.DataFrame({
-            "Liczba transakcji (CAF)": [global_tx_count if global_tx_count else None],
-            "Średnia wartość transakcji (CAF)": [None if avg_global is None else round(avg_global, 2)],
-            "Różnica": [None],
-        }, index=["Średnia (CAF — wszystkie kina)"])
-
-        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (CAF)","Średnia wartość transakcji (CAF)","Różnica"]]
-
-        def _fmt_pln(x):
-            return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-        def _row_style(row):
-            if row.name == "Średnia (CAF — wszystkie kina)":
-                return ['font-weight:700; background-color:#f3f4f6' for _ in row]
-            try:
-                diff = row.get("Różnica")
-                if pd.isna(diff): return ['' for _ in row]
-                if diff > 0:  return ['background-color:#dcfce7; font-weight:600' for _ in row]
-                if diff < 0:  return ['background-color:#fee2e2; font-weight:600' for _ in row]
-                return ['' for _ in row]
-            except Exception:
-                return ['' for _ in row]
-
-        styled = final_df.style.format({"Średnia wartość transakcji (CAF)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
-        st.dataframe(styled, use_container_width=True)
-
-        # Eksport do XLSX
-        try:
-            buffer = io.BytesIO()
-            out_df = final_df.copy()
-            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                out_df.to_excel(writer, index=True, sheet_name="CafeStats")
-                wb = writer.book; ws = writer.sheets["CafeStats"]
-                fmt_bold = wb.add_format({"bold": True})
-                fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
-                fmt_int = wb.add_format({"num_format": "0"})
-                ws.set_row(0, None, fmt_bold)
-                ws.set_column("A:A", 32)
-                ws.set_column("B:B", 20, fmt_int)
-                ws.set_column("C:C", 28, fmt_pln)
-                ws.set_column("D:D", 20, fmt_pln)
-            st.download_button("⬇️ Pobierz XLSX (Cafe Stats)", data=buffer.getvalue(),
-                               file_name="CafeStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        except Exception as ex:
-            st.warning(f"Nie udało się przygotować XLSX: {ex}")
-
-
-# ---------- Zakładka: VIP stats ----------
-with tab_vip:
-    st.subheader("VIP stats — wszystkie kina (VIP)")
-    df = ensure_data_or_stop()
-    df = add__date_column(df)
-
-    # Zakres dat
-    if "__date" in df.columns and df["__date"].notna().any():
-        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
-        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="vip_date")
-        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
-        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
-        dff = df.loc[mask_d].copy()
-    else:
-        dff = df.copy()
-
-    required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
-    if not required.issubset(dff.columns):
-        st.error("Brak wymaganych kolumn do obliczeń VIP: UserFullName, TransactionId, NetAmount, PosName.")
-        st.stop()
-
-    # Filtr: wszystkie rekordy z PosName zawierającym 'VIP'
-    tx_df = _keep_vip(dff)
-
-    if tx_df.empty:
-        st.info("Brak danych dla POS zawierających 'VIP' w wybranym zakresie dat.")
-    else:
-        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
-        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
-        nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
-        per_tx_total = f.where(nun <= 1, s)
-
-        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted)
-        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
-        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
-
-        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
-        nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
-        per_tx_all = f_all.where(nun_all <= 1, s_all)
-        global_tx_count = int(tx_df["TransactionId"].nunique())
-        global_revenue = float(per_tx_all.sum(min_count=1))
-        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
-
-        result = pd.DataFrame(index=users_sorted)
-        result["Liczba transakcji (VIP)"] = tx_count_by_user.astype("Int64")
-        result["Średnia wartość transakcji (VIP)"] = avg_by_user
-        result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2) if avg_global is not None else pd.NA
-
-        result_sorted = result.sort_values(by="Średnia wartość transakcji (VIP)", ascending=False, na_position="last")
-
-        summary_row = pd.DataFrame({
-            "Liczba transakcji (VIP)": [global_tx_count if global_tx_count else None],
-            "Średnia wartość transakcji (VIP)": [None if avg_global is None else round(avg_global, 2)],
-            "Różnica": [None],
-        }, index=["Średnia (VIP — wszystkie kina)"])
-
-        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (VIP)","Średnia wartość transakcji (VIP)","Różnica"]]
-
-        def _fmt_pln(x):
-            return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
-        def _row_style(row):
-            if row.name == "Średnia (VIP — wszystkie kina)":
-                return ['font-weight:700; background-color:#f3f4f6' for _ in row]
-            try:
-                diff = row.get("Różnica")
-                if pd.isna(diff): return ['' for _ in row]
-                if diff > 0:  return ['background-color:#dcfce7; font-weight:600' for _ in row]
-                if diff < 0:  return ['background-color:#fee2e2; font-weight:600' for _ in row]
-                return ['' for _ in row]
-            except Exception:
-                return ['' for _ in row]
-
-        styled = final_df.style.format({"Średnia wartość transakcji (VIP)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
-        st.dataframe(styled, use_container_width=True)
-
-        # Eksport do XLSX
-        try:
-            buffer = io.BytesIO()
-            out_df = final_df.copy()
-            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-                out_df.to_excel(writer, index=True, sheet_name="VIPStats")
-                wb = writer.book; ws = writer.sheets["VIPStats"]
-                fmt_bold = wb.add_format({"bold": True})
-                fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
-                fmt_int = wb.add_format({"num_format": "0"})
-                ws.set_row(0, None, fmt_bold)
-                ws.set_column("A:A", 32)
-                ws.set_column("B:B", 20, fmt_int)
-                ws.set_column("C:C", 28, fmt_pln)
-                ws.set_column("D:D", 20, fmt_pln)
-            st.download_button("⬇️ Pobierz XLSX (VIP stats)", data=buffer.getvalue(),
-                               file_name="VIPStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        except Exception as ex:
-            st.warning(f"Nie udało się przygotować XLSX: {ex}")
+            st.warning(f"Nie udało się przygotować eksportu XLSX (całość): {ex}")
