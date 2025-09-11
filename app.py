@@ -680,6 +680,16 @@ with tab_best:
 
     dff["__pnorm"] = dff["ProductName"].map(_norm_key)
     users_sorted = sorted(dff["UserFullName"].dropna().unique())
+    # Liczba transakcji bar (bez CAF/VIP) dla każdej osoby
+    _tx_counts_df = dff.copy()
+    if "PosName" in _tx_counts_df.columns:
+        _mask_excl = _tx_counts_df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        _tx_counts_df = _tx_counts_df.loc[~_mask_excl].copy()
+    if "TransactionId" in _tx_counts_df.columns:
+        _tx_count_bar = _tx_counts_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype("Int64")
+    else:
+        _tx_count_bar = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
+
     mask_extra = dff["__pnorm"] == "extranachossauce"
     mask_base = dff["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
     mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
@@ -709,28 +719,12 @@ with tab_best:
     st.markdown("#### % Extra Sos")
     if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
     st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True)
-
-    # Eksport do XLSX — % Extra Sos
-    try:
-        buffer = io.BytesIO()
-        _export = df_extra.copy()
-        if _export.index.name is None:
-            _export.index.name = "Zleceniobiorca"
-        _export = _export.reset_index()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            _export.to_excel(writer, index=False, sheet_name="Najlepsi_ExtraSos")
-            wb = writer.book; ws = writer.sheets["Najlepsi_ExtraSos"]
-            fmt_bold = wb.add_format({"bold": True})
-            ws.set_row(0, None, fmt_bold)
-            ws.set_column("A:A", 28)
-            ws.set_column("B:B", 18)
-            ws.set_column("C:C", 16)
-            fmt_pct = wb.add_format({"num_format": "0.0 %"});
-            ws.set_column("C:C", 12, fmt_pct)
-        st.download_button("⬇️ Pobierz XLSX (% Extra Sos)", data=buffer.getvalue(),
-                           file_name="Najlepsi_ExtraSos.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception as ex:
-        st.warning(f"Nie udało się przygotować eksportu XLSX (% Extra Sos): {ex}")
+    # Dodaj licznik transakcji i kolumnę Zleceniobiorca
+    df_extra = df_extra.copy()
+    df_extra.insert(0, "Liczba Transakcji", _tx_count_bar.reindex(df_extra.index).values)
+    df_extra = df_extra.reset_index().rename(columns={"index": "Zleceniobiorca"})
+    df_extra = df_extra[["Zleceniobiorca","Liczba Transakcji","Wartość"]]
+    st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True)
 
     # % Popcorny smakowe
     flavored = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
@@ -741,28 +735,11 @@ with tab_best:
     st.markdown("#### % Popcorny smakowe")
     if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
     st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True)
-
-    # Eksport do XLSX — % Popcorny smakowe
-    try:
-        buffer = io.BytesIO()
-        _export = df_pop.copy()
-        if _export.index.name is None:
-            _export.index.name = "Zleceniobiorca"
-        _export = _export.reset_index()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            _export.to_excel(writer, index=False, sheet_name="Najlepsi_PopcornySmakowe")
-            wb = writer.book; ws = writer.sheets["Najlepsi_PopcornySmakowe"]
-            fmt_bold = wb.add_format({"bold": True})
-            ws.set_row(0, None, fmt_bold)
-            ws.set_column("A:A", 28)
-            ws.set_column("B:B", 18)
-            ws.set_column("C:C", 16)
-            fmt_pct = wb.add_format({"num_format": "0.0 %"});
-            ws.set_column("C:C", 12, fmt_pct)
-        st.download_button("⬇️ Pobierz XLSX (% Popcorny smakowe)", data=buffer.getvalue(),
-                           file_name="Najlepsi_PopcornySmakowe.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception as ex:
-        st.warning(f"Nie udało się przygotować eksportu XLSX (% Popcorny smakowe): {ex}")
+    df_pop = df_pop.copy()
+    df_pop.insert(0, "Liczba Transakcji", _tx_count_bar.reindex(df_pop.index).values)
+    df_pop = df_pop.reset_index().rename(columns={"index": "Zleceniobiorca"})
+    df_pop = df_pop[["Zleceniobiorca","Liczba Transakcji","Wartość"]]
+    st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True)
 
     # % ShareCorn
     share_num_qty = dff.loc[mask_share_num].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
@@ -774,28 +751,11 @@ with tab_best:
     st.markdown("#### % ShareCorn")
     if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
     st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True)
-
-    # Eksport do XLSX — % ShareCorn
-    try:
-        buffer = io.BytesIO()
-        _export = df_share.copy()
-        if _export.index.name is None:
-            _export.index.name = "Zleceniobiorca"
-        _export = _export.reset_index()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            _export.to_excel(writer, index=False, sheet_name="Najlepsi_ShareCorn")
-            wb = writer.book; ws = writer.sheets["Najlepsi_ShareCorn"]
-            fmt_bold = wb.add_format({"bold": True})
-            ws.set_row(0, None, fmt_bold)
-            ws.set_column("A:A", 28)
-            ws.set_column("B:B", 18)
-            ws.set_column("C:C", 16)
-            fmt_pct = wb.add_format({"num_format": "0.0 %"});
-            ws.set_column("C:C", 12, fmt_pct)
-        st.download_button("⬇️ Pobierz XLSX (% ShareCorn)", data=buffer.getvalue(),
-                           file_name="Najlepsi_ShareCorn.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception as ex:
-        st.warning(f"Nie udało się przygotować eksportu XLSX (% ShareCorn): {ex}")
+    df_share = df_share.copy()
+    df_share.insert(0, "Liczba Transakcji", _tx_count_bar.reindex(df_share.index).values)
+    df_share = df_share.reset_index().rename(columns={"index": "Zleceniobiorca"})
+    df_share = df_share[["Zleceniobiorca","Liczba Transakcji","Wartość"]]
+    st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True)
 
     # Średnia wartość transakcji
     tx_df = dff.copy()
@@ -828,28 +788,13 @@ with tab_best:
         sty = df_avg.style.applymap(_color, subset=["Wartość"]).format({"Wartość": _fmt_pln})
         if avg_global is not None: st.caption(f"Średnia kina: **{avg_global:,.2f} zł**".replace(",", " ").replace(".", ","))
         st.dataframe(sty, use_container_width=True)
-
-    # Eksport do XLSX — Średnia wartość transakcji
-    try:
-        buffer = io.BytesIO()
-        _export = df_avg.copy()
-        if _export.index.name is None:
-            _export.index.name = "Zleceniobiorca"
-        _export = _export.reset_index()
-        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-            _export.to_excel(writer, index=False, sheet_name="Najlepsi_SredniaTransakcji")
-            wb = writer.book; ws = writer.sheets["Najlepsi_SredniaTransakcji"]
-            fmt_bold = wb.add_format({"bold": True})
-            ws.set_row(0, None, fmt_bold)
-            ws.set_column("A:A", 28)
-            ws.set_column("B:B", 18)
-            ws.set_column("C:C", 16)
-            fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'});
-            ws.set_column("B:B", 12, fmt_pln)
-        st.download_button("⬇️ Pobierz XLSX (Średnia wartość transakcji)", data=buffer.getvalue(),
-                           file_name="Najlepsi_SredniaTransakcji.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception as ex:
-        st.warning(f"Nie udało się przygotować eksportu XLSX (Średnia wartość transakcji): {ex}")
+    # Dodaj Liczba Transakcji i Zleceniobiorca dla tabeli średniej
+    df_avg = df_avg.copy()
+    df_avg.insert(0, "Liczba Transakcji", _tx_count_bar.reindex(df_avg.index).values)
+    df_avg = df_avg.reset_index().rename(columns={"index": "Zleceniobiorca"})
+    df_avg = df_avg[["Zleceniobiorca","Liczba Transakcji","Wartość"]]
+    sty = df_avg.style.applymap(_color, subset=["Wartość"]).format({"Wartość": _fmt_pln})
+    st.dataframe(sty, use_container_width=True)
     else:
         st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
 
@@ -1021,3 +966,195 @@ with tab_comp:
                                file_name="Konkurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as ex:
             st.warning(f"Nie udało się przygotować eksportu XLSX: {ex}")
+
+
+# ---------- Zakładka: Cafe Stats ----------
+with tab_cafe:
+    st.subheader("☕ Cafe Stats — wszystkie kina (CAF)")
+    df = ensure_data_or_stop()
+    df = add__date_column(df)
+
+    # Zakres dat
+    if "__date" in df.columns and df["__date"].notna().any():
+        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
+        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="cafe_date")
+        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
+        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
+        dff = df.loc[mask_d].copy()
+    else:
+        dff = df.copy()
+
+    required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
+    if not required.issubset(dff.columns):
+        st.error("Brak wymaganych kolumn do obliczeń CAF: UserFullName, TransactionId, NetAmount, PosName.")
+        st.stop()
+
+    # Filtr: wszystkie rekordy z PosName zawierającym 'CAF'
+    tx_df = _keep_caf(dff)
+
+    if tx_df.empty:
+        st.info("Brak danych dla POS zawierających 'CAF' w wybranym zakresie dat.")
+    else:
+        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
+        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
+        nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
+        per_tx_total = f.where(nun <= 1, s)
+
+        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted)
+        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
+        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
+
+        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
+        nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
+        per_tx_all = f_all.where(nun_all <= 1, s_all)
+        global_tx_count = int(tx_df["TransactionId"].nunique())
+        global_revenue = float(per_tx_all.sum(min_count=1))
+        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
+
+        result = pd.DataFrame(index=users_sorted)
+        result["Liczba transakcji (CAF)"] = tx_count_by_user.astype("Int64")
+        result["Średnia wartość transakcji (CAF)"] = avg_by_user
+        result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2) if avg_global is not None else pd.NA
+
+        result_sorted = result.sort_values(by="Średnia wartość transakcji (CAF)", ascending=False, na_position="last")
+
+        summary_row = pd.DataFrame({
+            "Liczba transakcji (CAF)": [global_tx_count if global_tx_count else None],
+            "Średnia wartość transakcji (CAF)": [None if avg_global is None else round(avg_global, 2)],
+            "Różnica": [None],
+        }, index=["Średnia (CAF — wszystkie kina)"])
+
+        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (CAF)","Średnia wartość transakcji (CAF)","Różnica"]]
+
+        def _fmt_pln(x):
+            return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+        def _row_style(row):
+            if row.name == "Średnia (CAF — wszystkie kina)":
+                return ['font-weight:700; background-color:#f3f4f6' for _ in row]
+            try:
+                diff = row.get("Różnica")
+                if pd.isna(diff): return ['' for _ in row]
+                if diff > 0:  return ['background-color:#dcfce7; font-weight:600' for _ in row]
+                if diff < 0:  return ['background-color:#fee2e2; font-weight:600' for _ in row]
+                return ['' for _ in row]
+            except Exception:
+                return ['' for _ in row]
+
+        styled = final_df.style.format({"Średnia wartość transakcji (CAF)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
+        st.dataframe(styled, use_container_width=True)
+
+        # Eksport do XLSX
+        try:
+            buffer = io.BytesIO()
+            out_df = final_df.copy()
+            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                out_df.to_excel(writer, index=True, sheet_name="CafeStats")
+                wb = writer.book; ws = writer.sheets["CafeStats"]
+                fmt_bold = wb.add_format({"bold": True})
+                fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
+                fmt_int = wb.add_format({"num_format": "0"})
+                ws.set_row(0, None, fmt_bold)
+                ws.set_column("A:A", 32)
+                ws.set_column("B:B", 20, fmt_int)
+                ws.set_column("C:C", 28, fmt_pln)
+                ws.set_column("D:D", 20, fmt_pln)
+            st.download_button("⬇️ Pobierz XLSX (Cafe Stats)", data=buffer.getvalue(),
+                               file_name="CafeStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as ex:
+            st.warning(f"Nie udało się przygotować XLSX: {ex}")
+
+
+# ---------- Zakładka: VIP stats ----------
+with tab_vip:
+    st.subheader("VIP stats — wszystkie kina (VIP)")
+    df = ensure_data_or_stop()
+    df = add__date_column(df)
+
+    # Zakres dat
+    if "__date" in df.columns and df["__date"].notna().any():
+        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
+        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="vip_date")
+        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
+        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
+        dff = df.loc[mask_d].copy()
+    else:
+        dff = df.copy()
+
+    required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
+    if not required.issubset(dff.columns):
+        st.error("Brak wymaganych kolumn do obliczeń VIP: UserFullName, TransactionId, NetAmount, PosName.")
+        st.stop()
+
+    # Filtr: wszystkie rekordy z PosName zawierającym 'VIP'
+    tx_df = _keep_vip(dff)
+
+    if tx_df.empty:
+        st.info("Brak danych dla POS zawierających 'VIP' w wybranym zakresie dat.")
+    else:
+        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
+        grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
+        nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
+        per_tx_total = f.where(nun <= 1, s)
+
+        revenue_by_user = per_tx_total.groupby("UserFullName").sum(min_count=1).reindex(users_sorted)
+        tx_count_by_user = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted)
+        avg_by_user = (revenue_by_user / tx_count_by_user.replace(0, pd.NA)).astype("Float64").round(2)
+
+        grp_all = tx_df.groupby("TransactionId")["NetAmount"]
+        nun_all = grp_all.nunique(dropna=True); s_all = grp_all.sum(min_count=1); f_all = grp_all.first()
+        per_tx_all = f_all.where(nun_all <= 1, s_all)
+        global_tx_count = int(tx_df["TransactionId"].nunique())
+        global_revenue = float(per_tx_all.sum(min_count=1))
+        avg_global = (global_revenue / global_tx_count) if global_tx_count else None
+
+        result = pd.DataFrame(index=users_sorted)
+        result["Liczba transakcji (VIP)"] = tx_count_by_user.astype("Int64")
+        result["Średnia wartość transakcji (VIP)"] = avg_by_user
+        result["Różnica"] = (avg_by_user - avg_global).astype("Float64").round(2) if avg_global is not None else pd.NA
+
+        result_sorted = result.sort_values(by="Średnia wartość transakcji (VIP)", ascending=False, na_position="last")
+
+        summary_row = pd.DataFrame({
+            "Liczba transakcji (VIP)": [global_tx_count if global_tx_count else None],
+            "Średnia wartość transakcji (VIP)": [None if avg_global is None else round(avg_global, 2)],
+            "Różnica": [None],
+        }, index=["Średnia (VIP — wszystkie kina)"])
+
+        final_df = pd.concat([summary_row, result_sorted], axis=0)[["Liczba transakcji (VIP)","Średnia wartość transakcji (VIP)","Różnica"]]
+
+        def _fmt_pln(x):
+            return "" if pd.isna(x) else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+        def _row_style(row):
+            if row.name == "Średnia (VIP — wszystkie kina)":
+                return ['font-weight:700; background-color:#f3f4f6' for _ in row]
+            try:
+                diff = row.get("Różnica")
+                if pd.isna(diff): return ['' for _ in row]
+                if diff > 0:  return ['background-color:#dcfce7; font-weight:600' for _ in row]
+                if diff < 0:  return ['background-color:#fee2e2; font-weight:600' for _ in row]
+                return ['' for _ in row]
+            except Exception:
+                return ['' for _ in row]
+
+        styled = final_df.style.format({"Średnia wartość transakcji (VIP)": _fmt_pln, "Różnica": _fmt_pln}).apply(_row_style, axis=1)
+        st.dataframe(styled, use_container_width=True)
+
+        # Eksport do XLSX
+        try:
+            buffer = io.BytesIO()
+            out_df = final_df.copy()
+            with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                out_df.to_excel(writer, index=True, sheet_name="VIPStats")
+                wb = writer.book; ws = writer.sheets["VIPStats"]
+                fmt_bold = wb.add_format({"bold": True})
+                fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
+                fmt_int = wb.add_format({"num_format": "0"})
+                ws.set_row(0, None, fmt_bold)
+                ws.set_column("A:A", 32)
+                ws.set_column("B:B", 20, fmt_int)
+                ws.set_column("C:C", 28, fmt_pln)
+                ws.set_column("D:D", 20, fmt_pln)
+            st.download_button("⬇️ Pobierz XLSX (VIP stats)", data=buffer.getvalue(),
+                               file_name="VIPStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except Exception as ex:
+            st.warning(f"Nie udało się przygotować XLSX: {ex}")
