@@ -696,7 +696,7 @@ with tab_indy:
     has_cafe = (avg_tr_cafe_u is not None)
     has_vip  = (avg_tr_vip_u is not None)
     has_any_money = has_bar or has_cafe or has_vip
-    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
+    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_sets_u])
     
     rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
