@@ -1551,4 +1551,45 @@ with tab_props:
         dff = df.copy()
 
     with st.expander("Zestawy", expanded=False):
-        pass  # wypełnimy w kolejnych krokach
+        if dff.empty:
+            st.info("Brak danych w wybranym zakresie dat.")
+        else:
+            # Lista zestawów (wraz z DuetShare+)
+            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
+
+            # Użyj znormalizowanej nazwy produktu jeśli dostępna
+            if "__pnorm" in dff.columns:
+                pn = dff["__pnorm"]
+                if "SETS_NORM" in globals():
+                    set_keys = list(SETS_NORM) if isinstance(SETS_NORM, (list, tuple, set)) else [str(SETS_NORM)]
+                else:
+                    set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+            else:
+                pn = dff["ProductName"].astype(str).str.upper().str.strip()
+                set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+            total_sets = float(qty[pn.isin(set_keys)].sum())
+
+            rows = []
+            for name in SETS_LIST_LOCAL:
+                key = str(name).upper().strip()
+                cnt = float(qty[pn == key].sum())
+                share = (cnt/total_sets*100) if total_sets else None
+                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share, 1))})
+
+            df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+
+            def _fmt_int(v):
+                try:
+                    return f"{int(v):,}".replace(",", " ")
+                except Exception:
+                    return ""
+
+            def _fmt_pct(v):
+                import pandas as pd
+                return "" if pd.isna(v) else f"{v:.1f} %"
+
+            styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+            st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
