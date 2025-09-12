@@ -1530,4 +1530,3 @@ with tab_props:
                 st.altair_chart(chart_pie, use_container_width=True)
         except Exception:
             st.caption("Nie udało się wyrenderować wykresu kołowego.")
-
