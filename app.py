@@ -469,7 +469,8 @@ with tab_pivot:
             "% Popcorny smakowe": [None if pct_pop_c is None else round(pct_pop_c, 1)],
             "% ShareCorn": [None if pct_share_c is None else round(pct_share_c, 1)],
             "% Zestawy": [None if pct_sets_c is None else round(pct_sets_c, 1)],
-        }, index=["Średnia kina"])final_df = pd.concat([summary_row, result_sorted], axis=0)
+        }, index=["Średnia kina"])
+        final_df = pd.concat([summary_row, result_sorted], axis=0)
     except Exception:
         final_df = result_sorted
 
