@@ -705,7 +705,7 @@ with tab_indy:
         ["% Zestawy",             pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
     ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
- pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
+    pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
     
     # Ukryj wiersze bez danych dla wybranej osoby (np. brak danych w segmencie cafe/VIP)
