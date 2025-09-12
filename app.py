@@ -536,7 +536,7 @@ with tab_indy:
 
         dff = bar_df
 
-    users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
+        users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
