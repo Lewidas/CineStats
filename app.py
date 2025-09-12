@@ -1550,7 +1550,7 @@ with tab_props:
     else:
         dff = df.copy()
 
-    st.expander("Zestawy", expanded=False):
+    with st.expander("Zestawy", expanded=False):
     # Udział % poszczególnych zestawów względem całości (dla wybranego zakresu dat)
     # Przygotowanie listy zestawów (zawiera także DuetShare+)
     try:
