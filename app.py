@@ -355,7 +355,6 @@ with tab_pivot:
 
         dff = bar_df
 
-    users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
     required = {"UserFullName", "ProductName", "Quantity"}
     if not required.issubset(dff.columns):
         st.error("Brak wymaganych kolumn: UserFullName, ProductName, Quantity.")
@@ -385,7 +384,6 @@ with tab_pivot:
     # % ShareCorn
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
-    mask_sets = dff["__pnorm"].isin(SETS_NORM)
 
     # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
     tx_bar_df = dff.copy()
@@ -565,7 +563,6 @@ with tab_indy:
     mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
-    mask_sets = dff["__pnorm"].isin(SETS_NORM)
 
     # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
     tx_bar_df = dff.copy()
@@ -608,12 +605,14 @@ with tab_indy:
             avg_tr_cinema = None
 
         # % Zestawy — kino (bar): suma zestawów / liczba transakcji bar
-        sets_sum = float(dff.loc[mask_sets, "Quantity"].sum()) if "Quantity" in dff.columns else 0.0
+        try:
+            sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
+        except Exception:
+            sets_sum = 0.0
         sets_den = int(tx_df_all["TransactionId"].nunique()) if "TransactionId" in tx_df_all.columns else 0
         pct_sets_cinema = (sets_sum / sets_den * 100) if sets_den else None
     except Exception:
         pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = pct_sets_cinema = avg_tr_cinema = None
-
 
     # OSOBA
     dff_u = dff[dff["UserFullName"] == sel_user].copy()
@@ -736,7 +735,26 @@ with tab_indy:
     money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
     disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
-    st.dataframe(disp, use_container_width=True, hide_index=True)
+    # Kolorowanie kolumny "Δ vs kino" w zależności od znaku
+    delta_vals = df_view["Δ vs kino"]
+
+    def _color_delta_col(_series):
+        out = []
+        import math
+        for v in delta_vals:
+            if v is None or (isinstance(v, float) and (v != v)):  # NaN
+                out.append("")
+            elif v > 0:
+                out.append("background-color:#dcfce7; color:#065f46; font-weight:600;")
+            elif v < 0:
+                out.append("background-color:#fee2e2; color:#7f1d1d; font-weight:600;")
+            else:
+                out.append("")
+        return out
+
+    styled = disp.style.apply(_color_delta_col, subset=["Δ vs kino"])
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
 
 
     # Wykresy
@@ -871,51 +889,6 @@ with tab_indy:
             rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
             chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
             st.altair_chart(chart_pct, use_container_width=True)
-        # --- Dodatkowy wykres: % Zestawy ---
-        try:
-            _u_sets = pct_sets_u
-            _c_sets = pct_sets_cinema
-        except NameError:
-            _u_sets = None
-            _c_sets = None
-
-        if _u_sets is not None:
-            st.markdown("#### % Zestawy")
-            uval = float(_u_sets)
-            cval = 0.0 if (_c_sets is None) else float(_c_sets)
-            _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
-            ucol = _gray if (_c_sets is None) else (_green if uval >= cval else _red)
-            label = ""
-            if _c_sets is not None:
-                d = uval - cval
-                s = "+" if d >= 0 else "−"
-                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-
-            df_chart_sets = pd.DataFrame([
-                {"Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol},
-                {"Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray},
-            ])
-
-            base_sets = alt.Chart(df_chart_sets)
-            bars_sets = base_sets.mark_bar(size=28).encode(
-                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-                y=alt.Y("Wartość:Q", title="%"),
-                color=alt.Color("kolor:N", legend=None, scale=None),
-                tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-            )
-            labels_sets = base_sets.mark_text(dy=-6, size=18).encode(
-                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-                y=alt.Y("Wartość:Q"),
-                text=alt.Text("diff_label:N"),
-                color=alt.Color("label_color:N", legend=None, scale=None)
-            )
-            rule_sets = base_sets.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(
-                strokeDash=[6,4], color="#6b7280", opacity=0.8
-            ).encode(y="Wartość:Q")
-
-            chart_sets = (bars_sets + labels_sets + rule_sets).properties(width=360, height=480)
-            st.altair_chart(chart_sets, use_container_width=False)
-
         else:
             st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
     else:
