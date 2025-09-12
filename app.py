@@ -375,6 +375,8 @@ with tab_pivot:
     # % Popcorny smakowe
     mask_flavored_pop = dff["__pnorm"].isin(FLAVORED_NORM)
     mask_base_pop = dff["__pnorm"].isin(BASE_POP_NORM)
+    
+    mask_sets = dff["__pnorm"].isin(SETS_NORM)
     flavored_qty = dff.loc[mask_flavored_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     base_pop_qty = dff.loc[mask_base_pop].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
     pct_popcorny = (flavored_qty / base_pop_qty.replace(0, pd.NA) * 100).astype("Float64").round(1)
