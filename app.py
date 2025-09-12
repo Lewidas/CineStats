@@ -260,7 +260,7 @@ SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
 
 # Zestawy (do KPI "% Zestawy")
-SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+", "DuetShare+"]
+SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+"]
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
 # =============== TABS (podstrony) ===============
@@ -736,48 +736,8 @@ with tab_indy:
     money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
     disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
-    # --- Kolorowanie kolumny różnicy vs. kino (robust) ---
-    try:
-        def __cs_num__(x):
-            import math
-            if x is None: return None
-            if isinstance(x, (int, float)):
-                try:
-                    if math.isnan(x): return None
-                except Exception: pass
-                return float(x)
-            s = str(x).strip().replace("−","-")
-            for t in ("zł","p.p.","%"): s = s.replace(t,"")
-            s = s.replace(" ","").replace("\u00A0","").lstrip("+").replace(",",".")
-            try: return float(s)
-            except Exception: return None
-    
-        def __cs_color__(v):
-            n = __cs_num__(v)
-            if n is None: return ""
-            if n > 0:  return "background-color:#dcfce7; color:#065f46; font-weight:600;"
-            if n < 0:  return "background-color:#fee2e2; color:#7f1d1d; font-weight:600;"
-            return ""
-    
-        # Ustal nazwę kolumny delta dynamicznie (obsłuż różne warianty nagłówka)
-        _cols = [c for c in list(disp.columns)]
-        _lc = [str(c).lower() for c in _cols]
-        _delta_idx = None
-        for i, c in enumerate(_lc):
-            if ("Δ" in str(_cols[i])) or ("rozn" in c) or ("różnic" in c) or ("vs kino" in c):
-                _delta_idx = i; break
-        if _delta_idx is None:
-            # awaryjnie: ostatnia kolumna
-            _delta_idx = len(_cols) - 1 if _cols else None
-    
-        if _delta_idx is not None and 0 <= _delta_idx < len(_cols):
-            _delta_col = _cols[_delta_idx]
-            _styled = disp.style.applymap(__cs_color__, subset=[_delta_col])
-            st.dataframe(_styled, use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(disp, use_container_width=True, hide_index=True)
-    except Exception:
-        st.dataframe(disp, use_container_width=True, hide_index=True)
+    st.dataframe(disp, use_container_width=True, hide_index=True)
+
 
     # Wykresy
     st.markdown("### 📊 Wykresy porównawcze")
@@ -911,51 +871,6 @@ with tab_indy:
             rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
             chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
             st.altair_chart(chart_pct, use_container_width=True)
-        # --- Dodatkowy wykres: % Zestawy ---    
-        try:
-            _u_sets = pct_sets_u
-            _c_sets = pct_sets_cinema
-        except NameError:
-            _u_sets = None
-            _c_sets = None
-
-        if _u_sets is not None:
-            st.markdown("#### % Zestawy")
-            uval = float(_u_sets)
-            cval = 0.0 if (_c_sets is None) else float(_c_sets)
-            _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
-            ucol = _gray if (_c_sets is None) else (_green if uval >= cval else _red)
-            label = ""
-            if _c_sets is not None:
-                d = uval - cval
-                s = "+" if d >= 0 else "−"
-                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-
-            df_chart_sets = pd.DataFrame([
-                {"Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol},
-                {"Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray},
-            ])
-
-            base_sets = alt.Chart(df_chart_sets)
-            bars_sets = base_sets.mark_bar(size=28).encode(
-                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-                y=alt.Y("Wartość:Q", title="%"),
-                color=alt.Color("kolor:N", legend=None, scale=None),
-                tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-            )
-            labels_sets = base_sets.mark_text(dy=-6, size=18).encode(
-                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-                y=alt.Y("Wartość:Q"),
-                text=alt.Text("diff_label:N"),
-                color=alt.Color("label_color:N", legend=None, scale=None)
-            )
-            rule_sets = base_sets.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(
-                strokeDash=[6,4], color="#6b7280", opacity=0.8
-            ).encode(y="Wartość:Q")
-
-            chart_sets = (bars_sets + labels_sets + rule_sets).properties(width=360, height=480)
-            st.altair_chart(chart_sets, use_container_width=False)
-            
         else:
             st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
     else:
@@ -1551,55 +1466,45 @@ with tab_props:
         dff = df.copy()
 
     with st.expander("Zestawy", expanded=False):
-    # Udział % poszczególnych zestawów względem całości (dla wybranego zakresu dat)
-    # Przygotowanie listy zestawów (zawiera także DuetShare+)
-    try:
-        SETS_LIST_LOCAL = SETS_LIST  # jeśli już istnieje w projekcie
-    except NameError:
-        SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
-
-    # Normalizacja ProductName jak w reszcie aplikacji
-    try:
-        _ = SETS_NORM  # sprawdź czy istnieje
-        use_norm = True
-    except NameError:
-        use_norm = False
-
-    if dff.empty:
-        st.info("Brak danych w wybranym zakresie dat.")
-    else:
-        if use_norm:
-            _pn = dff["__pnorm"] if "__pnorm" in dff.columns else dff["ProductName"].astype(str)
-            sets_keys = SETS_NORM if len(SETS_NORM) >= len(SETS_LIST_LOCAL) else [(_norm_key(x) if ' _norm_key' in globals() else str(x).upper().strip()) for x in SETS_LIST_LOCAL]
-            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
-            total_sets = float(qty[_pn.isin(sets_keys)].sum())
-            rows = []
-            for name in SETS_LIST_LOCAL:
-                key = _norm_key(name) if '_norm_key' in globals() else str(name).upper().strip()
-                cnt = float(qty[_pn == key].sum())
-                share = (cnt/total_sets*100) if total_sets else None
-                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share,1))})
+        if dff.empty:
+            st.info("Brak danych w wybranym zakresie dat.")
         else:
-            pn = dff["ProductName"].astype(str)
+            # Lista zestawów (wraz z DuetShare+)
+            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
+
+            # Użyj znormalizowanej nazwy produktu jeśli dostępna
+            if "__pnorm" in dff.columns:
+                pn = dff["__pnorm"]
+                if "SETS_NORM" in globals():
+                    set_keys = list(SETS_NORM) if isinstance(SETS_NORM, (list, tuple, set)) else [str(SETS_NORM)]
+                else:
+                    set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+            else:
+                pn = dff["ProductName"].astype(str).str.upper().str.strip()
+                set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+
             qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
-            total_sets = float(qty[pn.isin(SETS_LIST_LOCAL)].sum())
+            total_sets = float(qty[pn.isin(set_keys)].sum())
+
             rows = []
             for name in SETS_LIST_LOCAL:
-                cnt = float(qty[pn == name].sum())
+                key = str(name).upper().strip()
+                cnt = float(qty[pn == key].sum())
                 share = (cnt/total_sets*100) if total_sets else None
-                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share,1))})
+                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share, 1))})
 
-        df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+            df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
 
-        def _fmt_int(v):
-            try: return f"{int(v):,}".replace(",", " ")
-            except Exception: return ""
+            def _fmt_int(v):
+                try:
+                    return f"{int(v):,}".replace(",", " ")
+                except Exception:
+                    return ""
 
-        def _fmt_pct(v):
-            import pandas as pd
-            return "" if pd.isna(v) else f"{v:.1f} %"
+            def _fmt_pct(v):
+                import pandas as pd
+                return "" if pd.isna(v) else f"{v:.1f} %"
 
-        styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-        st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
-  # wypełnimy w kolejnych krokach
+            styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+            st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
