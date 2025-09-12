@@ -446,7 +446,11 @@ with tab_pivot:
         den_sum = float(dff.loc[mask_share_den, "Quantity"].sum())
         num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
         pct_share_c = num_sum / den_sum * 100 if den_sum else None
-
+        
+        
+        sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
+        sets_den = int(tx_df["TransactionId"].nunique()) if "TransactionId" in tx_df.columns else 0
+        pct_sets_c = (sets_sum / sets_den * 100) if sets_den else None
         if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
             grp_all = tx_df.groupby("TransactionId")["NetAmount"]
             nun_all = grp_all.nunique(dropna=True)
@@ -463,6 +467,7 @@ with tab_pivot:
             "% Extra Sos": [None if pct_extra_c is None else round(pct_extra_c, 1)],
             "% Popcorny smakowe": [None if pct_pop_c is None else round(pct_pop_c, 1)],
             "% ShareCorn": [None if pct_share_c is None else round(pct_share_c, 1)],
+            "% Zestawy": [None if pct_sets_c is None else round(pct_sets_c, 1)],
         }, index=["Średnia kina"])
         final_df = pd.concat([summary_row, result_sorted], axis=0)
     except Exception:
@@ -477,7 +482,7 @@ with tab_pivot:
         return ['font-weight:700; background-color:#f3f4f6' for _ in row] if row.name == "Średnia kina" else ['' for _ in row]
 
     styled = final_df.style.format({
-        "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct,
+        "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct, "% Zestawy": _fmt_pct,
         "Średnia wartość transakcji": _fmt_pln
     }).apply(_bold_and_shade, axis=1)
     st.dataframe(styled, use_container_width=True)
