@@ -736,8 +736,49 @@ with tab_indy:
     money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
     disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
-    st.dataframe(disp, use_container_width=True, hide_index=True)
-
+    # --- Kolorowanie kolumny "Δ vs kino" wg znaku (zielony/ czerwony / brak dla 0) ---
+    def __cs_to_num_delta__(x):
+        import math
+        if x is None:
+            return None
+        if isinstance(x, (int, float)):
+            try:
+                if math.isnan(x):
+                    return None
+            except Exception:
+                pass
+            return float(x)
+        s = str(x).strip()
+        if not s:
+            return None
+        s = s.replace("−", "-")  # normalizacja minusa U+2212
+        for token in ("zł", "p.p.", "%"):
+            s = s.replace(token, "")
+        s = s.replace(" ", "").replace("\u00A0", "").lstrip("+").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return None
+    
+    def __cs_color_delta_cell__(v):
+        num = __cs_to_num_delta__(v)
+        if num is None:
+            return ""
+        if num > 0:
+            return "background-color:#dcfce7; color:#065f46; font-weight:600;"
+        if num < 0:
+            return "background-color:#fee2e2; color:#7f1d1d; font-weight:600;"
+        return ""
+    
+    try:
+        if "Δ vs kino" in disp.columns:
+            _styled_disp = disp.style.applymap(__cs_color_delta_cell__, subset=["Δ vs kino"])
+            st.dataframe(_styled_disp, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(disp, use_container_width=True, hide_index=True)
+    except Exception:
+        # Awaryjnie bez stylowania, żeby wykresy poniżej zawsze się renderowały
+        st.dataframe(disp, use_container_width=True, hide_index=True)
 
     # Wykresy
     st.markdown("### 📊 Wykresy porównawcze")
