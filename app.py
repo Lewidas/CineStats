@@ -581,7 +581,7 @@ with tab_indy:
         except Exception:
             pct_sets_u = None
 
-                tx_df_u = dff_u.copy()
+            tx_df_u = dff_u.copy()
         if "PosName" in tx_df_u.columns:
             m_ex_u = tx_df_u["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
             tx_df_u = tx_df_u.loc[~m_ex_u].copy()
