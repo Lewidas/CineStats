@@ -260,7 +260,7 @@ SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
 
 # Zestawy (do KPI "% Zestawy")
-SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+"]
+SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+", "DuetShare+"]
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
 # =============== TABS (podstrony) ===============
