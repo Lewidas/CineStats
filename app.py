@@ -258,6 +258,10 @@ SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "K
 SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
+SETS_LIST = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+"]
+SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
+
+
 # =============== TABS (podstrony) ===============
 tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats"])
 
@@ -531,6 +535,8 @@ with tab_indy:
         vip_df  = _keep_vip(df_all)
 
         dff = bar_df
+
+    users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         dff = df.copy()
@@ -555,20 +561,25 @@ with tab_indy:
     else:
         tx_bar_count_by_user = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
 
-    # KINO
+    
+# KINO
     try:
+        # % Extra Sos
         base_sum = float(dff.loc[mask_base, "Quantity"].sum())
         extra_sum = float(dff.loc[mask_extra, "Quantity"].sum())
         pct_extra_cinema = (extra_sum / base_sum * 100) if base_sum else None
 
+        # % Popcorny smakowe
         pop_base_sum = float(dff.loc[mask_base_pop, "Quantity"].sum())
         pop_flav_sum = float(dff.loc[mask_flavored_pop, "Quantity"].sum())
         pct_popcorny_cinema = (pop_flav_sum / pop_base_sum * 100) if pop_base_sum else None
 
+        # % ShareCorn
         share_den_sum = float(dff.loc[mask_share_den, "Quantity"].sum())
         share_num_sum = float(dff.loc[mask_share_num, "Quantity"].sum())
         pct_sharecorn_cinema = (share_num_sum / share_den_sum * 100) if share_den_sum else None
 
+        # Średnia wartość transakcji (bar)
         tx_df_all = dff.copy()
         if "PosName" in tx_df_all.columns:
             m_ex = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
@@ -583,33 +594,36 @@ with tab_indy:
             global_revenue = float(per_tx_total_all.sum(min_count=1))
             avg_tr_cinema = (global_revenue / global_tx_count) if global_tx_count else None
         else:
-            
+            avg_tr_cinema = None
+
         # % Zestawy — kino (bar): suma zestawów / liczba transakcji bar
-        try:
-            sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
-        except Exception:
-            sets_sum = 0.0
+        sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
         sets_den = int(tx_df_all["TransactionId"].nunique()) if "TransactionId" in tx_df_all.columns else 0
         pct_sets_cinema = (sets_sum / sets_den * 100) if sets_den else None
-avg_tr_cinema = None
+
     except Exception:
         pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = pct_sets_cinema = avg_tr_cinema = None
 
-    # OSOBA
+
+# OSOBA
     dff_u = dff[dff["UserFullName"] == sel_user].copy()
     try:
+        # % Extra Sos
         base_u = float(dff_u.loc[mask_base, "Quantity"].sum())
         extra_u = float(dff_u.loc[mask_extra, "Quantity"].sum())
         pct_extra_u = (extra_u / base_u * 100) if base_u else None
 
+        # % Popcorny smakowe
         pop_base_u = float(dff_u.loc[mask_base_pop, "Quantity"].sum())
         pop_flav_u = float(dff_u.loc[mask_flavored_pop, "Quantity"].sum())
         pct_popcorny_u = (pop_flav_u / pop_base_u * 100) if pop_base_u else None
 
+        # % ShareCorn
         share_den_u = float(dff_u.loc[mask_share_den, "Quantity"].sum())
         share_num_u = float(dff_u.loc[mask_share_num, "Quantity"].sum())
         pct_sharecorn_u = (share_num_u / share_den_u * 100) if share_den_u else None
 
+        # Średnia wartość transakcji (bar)
         tx_df_u = dff_u.copy()
         if "PosName" in tx_df_u.columns:
             m_ex_u = tx_df_u["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
@@ -623,19 +637,20 @@ avg_tr_cinema = None
             tx_count_u = int(tx_df_u["TransactionId"].nunique())
             revenue_u = float(per_tx_total_u.sum(min_count=1))
             avg_tr_u = (revenue_u / tx_count_u) if tx_count_u else None
-            # % Zestawy — użytkownik (bar): suma zestawów / liczba transakcji bar użytkownika
-            try:
-                sets_sum_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
-            except Exception:
-                sets_sum_u = 0.0
-            pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
-
         else:
-            avg_tr_u = None; tx_count_u = None
+            avg_tr_u = None
+            tx_count_u = 0
+
+        # % Zestawy — użytkownik (bar): suma zestawów / liczba transakcji bar użytkownika
+        sets_sum_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
+        pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
+
     except Exception:
-        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = pct_sets_u = avg_tr_u = None; tx_count_u = None
+        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = pct_sets_u = avg_tr_u = None
+        tx_count_u = 0
 
     def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
+(x): return "" if x is None else f"{x:.1f} %"
     def _fmt_pln(x): return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
     def _fmt_diff_pp(u, c):
         if u is None or c is None: return ""
@@ -680,6 +695,7 @@ avg_tr_cinema = None
     has_any_money = has_bar or has_cafe or has_vip
     has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
     
+    
     rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
         ["Średnia wartość transakcji cafe", avg_tr_cafe_u, avg_tr_cafe_cinema, _fmt_diff_pln(avg_tr_cafe_u, avg_tr_cafe_cinema)],
@@ -687,9 +703,10 @@ avg_tr_cinema = None
         ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
         ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
         ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
-            ["% Zestawy",           pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
-]
+        ["% Zestawy",             pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
+    ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
+ pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
     
     # Ukryj wiersze bez danych dla wybranej osoby (np. brak danych w segmencie cafe/VIP)
