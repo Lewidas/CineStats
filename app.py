@@ -1508,3 +1508,26 @@ with tab_props:
             styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
             st.dataframe(styled, use_container_width=True, hide_index=True)
             st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
+                # --- Wykres kołowy: udziały zestawów ---
+    try:
+        import altair as alt  # lokalny import, nie wymaga zmian w nagłówku pliku
+        df_pie = df_sets.dropna(subset=["Udział (%)"]).copy()
+        if not df_pie.empty:
+            chart_pie = (
+                alt.Chart(df_pie)
+                .mark_arc()
+                .encode(
+                    theta=alt.Theta(field="Sztuki", type="quantitative"),
+                    color=alt.Color(field="Zestaw", type="nominal", legend=alt.Legend(title="Zestaw")),
+                    tooltip=[
+                        alt.Tooltip("Zestaw:N"),
+                        alt.Tooltip("Sztuki:Q", format=",.0f"),
+                        alt.Tooltip("Udział (%):Q", format=".1f"),
+                    ],
+                )
+                .properties(width=380, height=360)
+            )
+            st.altair_chart(chart_pie, use_container_width=True)
+    except Exception:
+        st.caption("Nie udało się wyrenderować wykresu kołowego.")
+
