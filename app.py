@@ -645,6 +645,7 @@ with tab_indy:
             sets_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
             den_u = tx_count_u if tx_count_u is not None else 0
             pct_sets_u = (sets_u / den_u * 100) if den_u else None
+
 # --- Averages for bar/cafe/vip (user & cinema)
     def _avg_user_for(frame, user):
         if not {"TransactionId","NetAmount","UserFullName"}.issubset(frame.columns):
