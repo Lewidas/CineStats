@@ -646,7 +646,7 @@ with tab_indy:
             try:
                 sets_sum_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
             except Exception:
-            pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
+                pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
 
         else:
             avg_tr_u = None; tx_count_u = None
