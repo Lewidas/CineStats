@@ -613,6 +613,7 @@ with tab_indy:
     except Exception:
         pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = pct_sets_cinema = avg_tr_cinema = None
 
+
     # OSOBA
     dff_u = dff[dff["UserFullName"] == sel_user].copy()
     try:
@@ -645,7 +646,6 @@ with tab_indy:
             try:
                 sets_sum_u = float(dff_u.loc[mask_sets, "Quantity"].sum())
             except Exception:
-                sets_sum_u = 0.0
             pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
 
         else:
