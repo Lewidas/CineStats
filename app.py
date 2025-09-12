@@ -258,6 +258,11 @@ SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "K
 SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
+
+# Zestawy (do KPI "% Zestawy")
+SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+"]
+SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
+
 # =============== TABS (podstrony) ===============
 tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats"])
 
