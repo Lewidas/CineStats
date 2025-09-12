@@ -871,6 +871,51 @@ with tab_indy:
             rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
             chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
             st.altair_chart(chart_pct, use_container_width=True)
+        # --- Dodatkowy wykres: % Zestawy ---
+        try:
+            _u_sets = pct_sets_u
+            _c_sets = pct_sets_cinema
+        except NameError:
+            _u_sets = None
+            _c_sets = None
+
+        if _u_sets is not None:
+            st.markdown("#### % Zestawy")
+            uval = float(_u_sets)
+            cval = 0.0 if (_c_sets is None) else float(_c_sets)
+            _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
+            ucol = _gray if (_c_sets is None) else (_green if uval >= cval else _red)
+            label = ""
+            if _c_sets is not None:
+                d = uval - cval
+                s = "+" if d >= 0 else "−"
+                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
+
+            df_chart_sets = pd.DataFrame([
+                {"Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol},
+                {"Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray},
+            ])
+
+            base_sets = alt.Chart(df_chart_sets)
+            bars_sets = base_sets.mark_bar(size=28).encode(
+                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
+                y=alt.Y("Wartość:Q", title="%"),
+                color=alt.Color("kolor:N", legend=None, scale=None),
+                tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
+            )
+            labels_sets = base_sets.mark_text(dy=-6, size=18).encode(
+                x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
+                y=alt.Y("Wartość:Q"),
+                text=alt.Text("diff_label:N"),
+                color=alt.Color("label_color:N", legend=None, scale=None)
+            )
+            rule_sets = base_sets.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(
+                strokeDash=[6,4], color="#6b7280", opacity=0.8
+            ).encode(y="Wartość:Q")
+
+            chart_sets = (bars_sets + labels_sets + rule_sets).properties(width=360, height=480)
+            st.altair_chart(chart_sets, use_container_width=False)
+
         else:
             st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
     else:
