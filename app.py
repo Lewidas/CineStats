@@ -737,49 +737,49 @@ with tab_indy:
     disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
     
-# ——— Kolorowanie kolumny "Δ vs kino" wg znaku ———
-def _to_num_for_delta(x):
-    import math
-    if x is None:
-        return None
-    if isinstance(x, (int, float)):
+    # ——— Kolorowanie kolumny "Δ vs kino" wg znaku ———
+    def _to_num_for_delta(x):
+        import math
+        if x is None:
+            return None
+        if isinstance(x, (int, float)):
+            try:
+                if math.isnan(x):
+                    return None
+            except Exception:
+                pass
+            return float(x)
+        s = str(x).strip()
+        if not s:
+            return None
+        # normalizacja: minus U+2212, spacje, jednostki i przecinki
+        s = s.replace("−", "-")
+        for token in ["zł", "p.p.", "%"]:
+            s = s.replace(token, "")
+        s = s.replace(" ", "").replace("\u00A0", "")
+        s = s.lstrip("+")
+        s = s.replace(",", ".")
         try:
-            if math.isnan(x):
-                return None
+            return float(s)
         except Exception:
-            pass
-        return float(x)
-    s = str(x).strip()
-    if not s:
-        return None
-    # normalizacja: minus U+2212, spacje, jednostki i przecinki
-    s = s.replace("−", "-")
-    for token in ["zł", "p.p.", "%"]:
-        s = s.replace(token, "")
-    s = s.replace(" ", "").replace("\u00A0", "")
-    s = s.lstrip("+")
-    s = s.replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return None
+            return None
 
-def _color_delta_cell(v):
-    num = _to_num_for_delta(v)
-    if num is None:
+    def _color_delta_cell(v):
+        num = _to_num_for_delta(v)
+        if num is None:
+            return ""
+        if num > 0:
+            return "background-color:#dcfce7; color:#065f46; font-weight:600;"
+        if num < 0:
+            return "background-color:#fee2e2; color:#7f1d1d; font-weight:600;"
         return ""
-    if num > 0:
-        return "background-color:#dcfce7; color:#065f46; font-weight:600;"
-    if num < 0:
-        return "background-color:#fee2e2; color:#7f1d1d; font-weight:600;"
-    return ""
 
-try:
-    styled_disp = disp.style.applymap(_color_delta_cell, subset=["Δ vs kino"])
-    st.dataframe(styled_disp, use_container_width=True, hide_index=True)
-except Exception:
-    # Awaryjnie bez stylowania
-    st.dataframe(disp, use_container_width=True, hide_index=True)
+    try:
+        styled_disp = disp.style.applymap(_color_delta_cell, subset=["Δ vs kino"])
+        st.dataframe(styled_disp, use_container_width=True, hide_index=True)
+    except Exception:
+        # Awaryjnie bez stylowania
+        st.dataframe(disp, use_container_width=True, hide_index=True)
 
 
 
