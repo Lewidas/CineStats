@@ -264,7 +264,7 @@ SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szk
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
 # =============== TABS (podstrony) ===============
-tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats"])
+tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "VIP stats", "Proporcje sprzedaży"])
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
@@ -1533,3 +1533,22 @@ with tab_vip:
                                file_name="VIPStats.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as ex:
             st.warning(f"Nie udało się przygotować XLSX: {ex}")
+
+# ---------- Zakładka: Proporcje sprzedaży ----------
+with tab_props:
+    st.subheader("Proporcje sprzedaży")
+    df = ensure_data_or_stop()
+    df = add__date_column(df)
+
+    # Zakres dat
+    if "__date" in df.columns and df["__date"].notna().any():
+        min_d, max_d = df["__date"].dropna().min(), df["__date"].dropna().max()
+        picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="props_date")
+        d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
+        mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
+        dff = df.loc[mask_d].copy()
+    else:
+        dff = df.copy()
+
+    with st.expander("Zestawy", expanded=False):
+        pass  # wypełnimy w kolejnych krokach
