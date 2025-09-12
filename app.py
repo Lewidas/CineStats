@@ -650,7 +650,7 @@ with tab_indy:
         tx_count_u = 0
 
     def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
-    (x): return "" if x is None else f"{x:.1f} %"
+        (x): return "" if x is None else f"{x:.1f} %"
     def _fmt_pln(x): return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
     def _fmt_diff_pp(u, c):
         if u is None or c is None: return ""
