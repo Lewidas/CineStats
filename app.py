@@ -413,6 +413,10 @@ with tab_pivot:
         avg_value = (revenue / tx_count.astype("Float64").replace(0, pd.NA)).astype("Float64").round(2)
     else:
         avg_value = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64")
+        
+    # % Zestawy = (suma zestawów) / (liczba transakcji bar) * 100
+    sets_by_user = dff.loc[mask_sets].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
+    pct_sets = (sets_by_user / tx_count.astype("Float64").replace(0, pd.NA) * 100).astype("Float64").round(1)
 
     # Finalna tabela
     result = pd.DataFrame(index=users_sorted)
@@ -421,6 +425,7 @@ with tab_pivot:
     result["% Extra Sos"] = pct_extra
     result["% Popcorny smakowe"] = pct_popcorny
     result["% ShareCorn"] = pct_sharecorn
+    result["% Zestawy"] = pct_sets
     order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
     result = result[order]
     result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
