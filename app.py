@@ -1551,4 +1551,55 @@ with tab_props:
         dff = df.copy()
 
     with st.expander("Zestawy", expanded=False):
-        pass  # wypełnimy w kolejnych krokach
+    # Udział % poszczególnych zestawów względem całości (dla wybranego zakresu dat)
+    # Przygotowanie listy zestawów (zawiera także DuetShare+)
+    try:
+        SETS_LIST_LOCAL = SETS_LIST  # jeśli już istnieje w projekcie
+    except NameError:
+        SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
+
+    # Normalizacja ProductName jak w reszcie aplikacji
+    try:
+        _ = SETS_NORM  # sprawdź czy istnieje
+        use_norm = True
+    except NameError:
+        use_norm = False
+
+    if dff.empty:
+        st.info("Brak danych w wybranym zakresie dat.")
+    else:
+        if use_norm:
+            _pn = dff["__pnorm"] if "__pnorm" in dff.columns else dff["ProductName"].astype(str)
+            sets_keys = SETS_NORM if len(SETS_NORM) >= len(SETS_LIST_LOCAL) else [(_norm_key(x) if ' _norm_key' in globals() else str(x).upper().strip()) for x in SETS_LIST_LOCAL]
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+            total_sets = float(qty[_pn.isin(sets_keys)].sum())
+            rows = []
+            for name in SETS_LIST_LOCAL:
+                key = _norm_key(name) if '_norm_key' in globals() else str(name).upper().strip()
+                cnt = float(qty[_pn == key].sum())
+                share = (cnt/total_sets*100) if total_sets else None
+                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share,1))})
+        else:
+            pn = dff["ProductName"].astype(str)
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+            total_sets = float(qty[pn.isin(SETS_LIST_LOCAL)].sum())
+            rows = []
+            for name in SETS_LIST_LOCAL:
+                cnt = float(qty[pn == name].sum())
+                share = (cnt/total_sets*100) if total_sets else None
+                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share,1))})
+
+        df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+
+        def _fmt_int(v):
+            try: return f"{int(v):,}".replace(",", " ")
+            except Exception: return ""
+
+        def _fmt_pct(v):
+            import pandas as pd
+            return "" if pd.isna(v) else f"{v:.1f} %"
+
+        styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
+  # wypełnimy w kolejnych krokach
