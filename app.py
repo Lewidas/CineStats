@@ -432,8 +432,10 @@ with tab_pivot:
     result["% Extra Sos"] = pct_extra
     result["% Popcorny smakowe"] = pct_popcorny
     result["% ShareCorn"] = pct_sharecorn
+    
     result["% Zestawy"] = pct_sets
-    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "%Zestawy"]
+    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy"]
+    
     result = result[order]
     result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
 
