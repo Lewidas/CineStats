@@ -260,7 +260,7 @@ SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
 
 # Zestawy (do KPI "% Zestawy")
-SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+"]
+SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+", "DuetShare+"]
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
 # =============== TABS (podstrony) ===============
@@ -736,8 +736,48 @@ with tab_indy:
     money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
     disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
     disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
-    st.dataframe(disp, use_container_width=True, hide_index=True)
-
+    # --- Kolorowanie kolumny różnicy vs. kino (robust) ---
+    try:
+        def __cs_num__(x):
+            import math
+            if x is None: return None
+            if isinstance(x, (int, float)):
+                try:
+                    if math.isnan(x): return None
+                except Exception: pass
+                return float(x)
+            s = str(x).strip().replace("−","-")
+            for t in ("zł","p.p.","%"): s = s.replace(t,"")
+            s = s.replace(" ","").replace("\u00A0","").lstrip("+").replace(",",".")
+            try: return float(s)
+            except Exception: return None
+    
+        def __cs_color__(v):
+            n = __cs_num__(v)
+            if n is None: return ""
+            if n > 0:  return "background-color:#dcfce7; color:#065f46; font-weight:600;"
+            if n < 0:  return "background-color:#fee2e2; color:#7f1d1d; font-weight:600;"
+            return ""
+    
+        # Ustal nazwę kolumny delta dynamicznie (obsłuż różne warianty nagłówka)
+        _cols = [c for c in list(disp.columns)]
+        _lc = [str(c).lower() for c in _cols]
+        _delta_idx = None
+        for i, c in enumerate(_lc):
+            if ("Δ" in str(_cols[i])) or ("rozn" in c) or ("różnic" in c) or ("vs kino" in c):
+                _delta_idx = i; break
+        if _delta_idx is None:
+            # awaryjnie: ostatnia kolumna
+            _delta_idx = len(_cols) - 1 if _cols else None
+    
+        if _delta_idx is not None and 0 <= _delta_idx < len(_cols):
+            _delta_col = _cols[_delta_idx]
+            _styled = disp.style.applymap(__cs_color__, subset=[_delta_col])
+            st.dataframe(_styled, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(disp, use_container_width=True, hide_index=True)
+    except Exception:
+        st.dataframe(disp, use_container_width=True, hide_index=True)
 
     # Wykresy
     st.markdown("### 📊 Wykresy porównawcze")
@@ -871,7 +911,7 @@ with tab_indy:
             rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
             chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
             st.altair_chart(chart_pct, use_container_width=True)
-        # --- Dodatkowy wykres: % Zestawy ---
+        # --- Dodatkowy wykres: % Zestawy ---    
         try:
             _u_sets = pct_sets_u
             _c_sets = pct_sets_cinema
@@ -915,7 +955,7 @@ with tab_indy:
 
             chart_sets = (bars_sets + labels_sets + rule_sets).properties(width=360, height=480)
             st.altair_chart(chart_sets, use_container_width=False)
-
+            
         else:
             st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
     else:
@@ -1510,6 +1550,77 @@ with tab_props:
     else:
         dff = df.copy()
 
+    with st.expander("Zestawy", expanded=False):
+        if dff.empty:
+            st.info("Brak danych w wybranym zakresie dat.")
+        else:
+            # Lista zestawów (wraz z DuetShare+)
+            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
+
+            # Użyj znormalizowanej nazwy produktu jeśli dostępna
+            if "__pnorm" in dff.columns:
+                pn = dff["__pnorm"]
+                if "SETS_NORM" in globals():
+                    set_keys = list(SETS_NORM) if isinstance(SETS_NORM, (list, tuple, set)) else [str(SETS_NORM)]
+                else:
+                    set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+            else:
+                pn = dff["ProductName"].astype(str).str.upper().str.strip()
+                set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
+
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+            total_sets = float(qty[pn.isin(set_keys)].sum())
+
+            rows = []
+            for name in SETS_LIST_LOCAL:
+                key = str(name).upper().strip()
+                cnt = float(qty[pn == key].sum())
+                share = (cnt/total_sets*100) if total_sets else None
+                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share, 1))})
+
+            df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+
+            def _fmt_int(v):
+                try:
+                    return f"{int(v):,}".replace(",", " ")
+                except Exception:
+                    return ""
+
+            def _fmt_pct(v):
+                import pandas as pd
+                return "" if pd.isna(v) else f"{v:.1f} %"
+
+            styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+            st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
+                # --- Wykres kołowy: udziały zestawów ---
+        try:
+            import altair as alt  # lokalny import, nie wymaga zmian w nagłówku pliku
+            df_pie = df_sets.dropna(subset=["Udział (%)"]).copy()
+            if not df_pie.empty:
+                chart_pie = (
+                    alt.Chart(df_pie)
+                    .mark_arc()
+                    .encode(
+                        theta=alt.Theta(field="Sztuki", type="quantitative"),
+                        color=alt.Color(field="Zestaw", type="nominal", legend=alt.Legend(title="Zestaw")),
+                        tooltip=[
+                            alt.Tooltip("Zestaw:N"),
+                            alt.Tooltip("Sztuki:Q", format=",.0f"),
+                            alt.Tooltip("Udział (%):Q", format=".1f"),
+                        ],
+                    )
+                    .properties(width=380, height=360)
+                    .configure_legend(
+                        labelFontSize=30,
+                        titleFontSize=35,
+                        symbolSize=400,   # (opcjonalnie)
+                    )
+                )
+                st.altair_chart(chart_pie, use_container_width=True)
+        except Exception:
+            st.caption("Nie udało się wyrenderować wykresu kołowego.")
+            
     # --- Expander: Nachos BBQ vs serowe ---
     with st.expander("Nachos BBQ vs serowe", expanded=False):
         if dff.empty:
@@ -1579,6 +1690,11 @@ with tab_props:
                             ],
                         )
                         .properties(width=380, height=360)
+                        .configure_legend(
+                            labelFontSize=30,
+                            titleFontSize=35,
+                            symbolSize=300,   # (opcjonalnie)
+                        )   
                     )
                     st.altair_chart(chart_pie_n, use_container_width=True)
             except Exception:
