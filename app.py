@@ -1693,7 +1693,7 @@ with tab_props:
                         .configure_legend(
                             labelFontSize=30,
                             titleFontSize=35,
-                            symbolSize=300,   # (opcjonalnie)
+                            symbolSize=400,   # (opcjonalnie)
                         )   
                     )
                     st.altair_chart(chart_pie_n, use_container_width=True)
