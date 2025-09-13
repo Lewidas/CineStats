@@ -1611,6 +1611,11 @@ with tab_props:
                         ],
                     )
                     .properties(width=380, height=360)
+                    .configure_legend(
+                        labelFontSize=16,
+                        titleFontSize=18,
+                        symbolSize=200,   # (opcjonalnie)
+                    )
                 )
                 st.altair_chart(chart_pie, use_container_width=True)
         except Exception:
