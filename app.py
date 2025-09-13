@@ -962,6 +962,79 @@ with tab_indy:
         st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
 
 
+
+    # --- Expander: Nachos BBQ vs serowe ---
+    with st.expander("Nachos BBQ vs serowe", expanded=False):
+        if dff.empty:
+            st.info("Brak danych w wybranym zakresie dat.")
+        else:
+            # Klucze produktów: tacka średnia/duża jako baza nachos
+            BASE_NACHOS_KEYS_NORM = {"tackanachossrednia", "tackanachosduza"}
+            CHEESE_KEY_NORM = "nachosserowe"
+            # Wybór kolumny z nazwą produktu (znormalizowana jeśli dostępna)
+            if "__pnorm" in dff.columns:
+                pn = dff["__pnorm"].astype(str)
+            else:
+                pn = dff["ProductName"].astype(str).str.upper().str.strip()
+                # zamień na normę lokalnie (górne porównania bazują na norm_key)
+                pn = pn.apply(lambda s: "".join(ch for ch in s if ch.isalnum()).lower())
+
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+
+            total_nachos = float(qty[pn.isin(BASE_NACHOS_KEYS_NORM)].sum())
+            serowe_cnt   = float(qty[pn == CHEESE_KEY_NORM].sum())
+            # BBQ = całość nachos - serowe
+            bbq_cnt = max(0.0, total_nachos - serowe_cnt)
+
+            if total_nachos > 0:
+                serowe_pct = round(serowe_cnt / total_nachos * 100, 1)
+                bbq_pct    = round(100.0 - serowe_pct, 1)
+            else:
+                serowe_pct = None
+                bbq_pct    = None
+
+            rows = [
+                {"Kategoria": "Nachos SEROWE", "Sztuki": serowe_cnt, "Udział (%)": serowe_pct},
+                {"Kategoria": "Nachos BBQ",    "Sztuki": bbq_cnt,    "Udział (%)": bbq_pct},
+            ]
+            df_nachos = pd.DataFrame(rows)
+
+            def _fmt_int(v):
+                try:
+                    return f"{int(round(v)):,}".replace(",", " ")
+                except Exception:
+                    return ""
+            def _fmt_pct(v):
+                import pandas as pd
+                return "" if pd.isna(v) else f"{float(v):.1f} %"
+
+            styled_nachos = df_nachos.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled_nachos, use_container_width=True, hide_index=True)
+            st.caption(f"Łącznie tacki nachos (średnia + duża): {int(round(total_nachos)):,}".replace(",", " "))
+
+            # Wykres kołowy: serowe vs BBQ
+            try:
+                import altair as alt
+                df_pie_n = df_nachos.dropna(subset=["Udział (%)"]).copy()
+                if not df_pie_n.empty:
+                    chart_pie_n = (
+                        alt.Chart(df_pie_n)
+                        .mark_arc()
+                        .encode(
+                            theta=alt.Theta(field="Sztuki", type="quantitative"),
+                            color=alt.Color(field="Kategoria", type="nominal",
+                                            legend=alt.Legend(title="Kategoria", labelFontSize=16, titleFontSize=18, symbolSize=200)),
+                            tooltip=[
+                                alt.Tooltip("Kategoria:N"),
+                                alt.Tooltip("Sztuki:Q", format=",.0f"),
+                                alt.Tooltip("Udział (%):Q", format=".1f"),
+                            ],
+                        )
+                        .properties(width=380, height=360)
+                    )
+                    st.altair_chart(chart_pie_n, use_container_width=True)
+            except Exception:
+                st.caption("Nie udało się wyrenderować wykresu kołowego (nachos).")
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
     st.subheader("🏆 Najlepsi — ranking wg wskaźników")
@@ -1551,72 +1624,4 @@ with tab_props:
         dff = df.copy()
 
     with st.expander("Zestawy", expanded=False):
-        if dff.empty:
-            st.info("Brak danych w wybranym zakresie dat.")
-        else:
-            # Lista zestawów (wraz z DuetShare+)
-            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
-
-            # Użyj znormalizowanej nazwy produktu jeśli dostępna
-            if "__pnorm" in dff.columns:
-                pn = dff["__pnorm"]
-                if "SETS_NORM" in globals():
-                    set_keys = list(SETS_NORM) if isinstance(SETS_NORM, (list, tuple, set)) else [str(SETS_NORM)]
-                else:
-                    set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
-            else:
-                pn = dff["ProductName"].astype(str).str.upper().str.strip()
-                set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
-
-            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
-            total_sets = float(qty[pn.isin(set_keys)].sum())
-
-            rows = []
-            for name in SETS_LIST_LOCAL:
-                key = str(name).upper().strip()
-                cnt = float(qty[pn == key].sum())
-                share = (cnt/total_sets*100) if total_sets else None
-                rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share, 1))})
-
-            df_sets = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
-
-            def _fmt_int(v):
-                try:
-                    return f"{int(v):,}".replace(",", " ")
-                except Exception:
-                    return ""
-
-            def _fmt_pct(v):
-                import pandas as pd
-                return "" if pd.isna(v) else f"{v:.1f} %"
-
-            styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-            st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
-                # --- Wykres kołowy: udziały zestawów ---
-        try:
-            import altair as alt  # lokalny import, nie wymaga zmian w nagłówku pliku
-            df_pie = df_sets.dropna(subset=["Udział (%)"]).copy()
-            if not df_pie.empty:
-                chart_pie = (
-                    alt.Chart(df_pie)
-                    .mark_arc()
-                    .encode(
-                        theta=alt.Theta(field="Sztuki", type="quantitative"),
-                        color=alt.Color(field="Zestaw", type="nominal", legend=alt.Legend(title="Zestaw")),
-                        tooltip=[
-                            alt.Tooltip("Zestaw:N"),
-                            alt.Tooltip("Sztuki:Q", format=",.0f"),
-                            alt.Tooltip("Udział (%):Q", format=".1f"),
-                        ],
-                    )
-                    .properties(width=380, height=360)
-                    .configure_legend(
-                        labelFontSize=30,
-                        titleFontSize=35,
-                        symbolSize=400,   # (opcjonalnie)
-                    )
-                )
-                st.altair_chart(chart_pie, use_container_width=True)
-        except Exception:
-            st.caption("Nie udało się wyrenderować wykresu kołowego.")
+        pass  # wypełnimy w kolejnych krokach
