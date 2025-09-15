@@ -958,6 +958,88 @@ with tab_indy:
             
         else:
             st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
+            # --- Struktura sprzedaży — zestawy (dla wybranego zleceniobiorcy) ---
+    st.markdown("### 🧩 Struktura sprzedaży — zestawy (osoba)")
+
+    try:
+        # Dane tylko dla aktualnie wybranego zleceniobiorcy
+        dff_u_sets = dff[dff["UserFullName"] == sel_user].copy()
+
+        if dff_u_sets.empty:
+            st.info("Brak danych o zestawach dla wybranego zleceniobiorcy w wybranym okresie.")
+        else:
+            # Nazwy zestawów jak w 'Proporcje sprzedaży' → Zestawy
+            SETS_LIST_LOCAL = [
+                "XLOffer+","Sredni+","Duzy+","Family1+1",
+                "Duet+","MAXI+","Szkolny+","DuetShare+"
+            ]
+
+            # Znormalizowana nazwa produktu (jak w reszcie aplikacji)
+            if "__pnorm" not in dff_u_sets.columns:
+                dff_u_sets["__pnorm"] = dff_u_sets["ProductName"].map(_norm_key)
+
+            pn  = dff_u_sets["__pnorm"]
+            qty = pd.to_numeric(dff_u_sets.get("Quantity"), errors="coerce").fillna(0)
+
+            # Zlicz sztuki dla każdego zestawu po kluczu __pnorm
+            rows = []
+            total_sets = 0.0
+            for name in SETS_LIST_LOCAL:
+                key = _norm_key(name)  # np. "XLOffer+" → "xloffer"
+                cnt = float(qty[pn == key].sum())
+                rows.append({"Zestaw": name, "Sztuki": cnt})
+                total_sets += cnt
+
+            # Udziały %
+            for r in rows:
+                r["Udział (%)"] = (None if total_sets == 0 else round(r["Sztuki"] / total_sets * 100, 1))
+
+            df_sets_user = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+
+            # Formatki
+            def _fmt_int(v):
+                try:
+                    return f"{int(v):,}".replace(",", " ")
+                except Exception:
+                    return ""
+
+            def _fmt_pct(v):
+                return "" if pd.isna(v) else f"{v:.1f} %"
+
+            styled_sets_user = df_sets_user.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled_sets_user, use_container_width=True, hide_index=True)
+            st.caption(f"Razem zestawów (osoba): {int(total_sets):,}".replace(",", " "))
+
+            # Wykres kołowy — jak w 'Proporcje sprzedaży' → Zestawy
+            if total_sets > 0:
+                try:
+                    import altair as alt
+                    df_pie_u = df_sets_user.dropna(subset=["Udział (%)"]).copy()
+                    if not df_pie_u.empty:
+                        chart_pie_u = (
+                            alt.Chart(df_pie_u)
+                            .mark_arc()
+                            .encode(
+                                theta=alt.Theta(field="Sztuki", type="quantitative"),
+                                color=alt.Color(
+                                    field="Zestaw", type="nominal",
+                                    legend=alt.Legend(title="Zestaw", labelFontSize=16, titleFontSize=18, symbolSize=200)
+                                ),
+                                tooltip=[
+                                    alt.Tooltip("Zestaw:N"),
+                                    alt.Tooltip("Sztuki:Q", format=",.0f"),
+                                    alt.Tooltip("Udział (%):Q", format=".1f"),
+                                ],
+                            )
+                            .properties(width=380, height=360)
+                        )
+                        st.altair_chart(chart_pie_u, use_container_width=True)
+                except Exception as ex:
+                    st.caption("Nie udało się wyrenderować wykresu kołowego (zestawy — osoba).")
+    except Exception as ex:
+        st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
+
+
     else:
         st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
 
@@ -1091,88 +1173,7 @@ with tab_best:
     else:
         st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
         
-        # --- Struktura sprzedaży — zestawy (dla wybranego zleceniobiorcy) ---
-    st.markdown("### 🧩 Struktura sprzedaży — zestawy (osoba)")
-
-    try:
-        # Dane tylko dla aktualnie wybranego zleceniobiorcy
-        dff_u_sets = dff[dff["UserFullName"] == sel_user].copy()
-
-        if dff_u_sets.empty:
-            st.info("Brak danych o zestawach dla wybranego zleceniobiorcy w wybranym okresie.")
-        else:
-            # Nazwy zestawów jak w 'Proporcje sprzedaży' → Zestawy
-            SETS_LIST_LOCAL = [
-                "XLOffer+","Sredni+","Duzy+","Family1+1",
-                "Duet+","MAXI+","Szkolny+","DuetShare+"
-            ]
-
-            # Znormalizowana nazwa produktu (jak w reszcie aplikacji)
-            if "__pnorm" not in dff_u_sets.columns:
-                dff_u_sets["__pnorm"] = dff_u_sets["ProductName"].map(_norm_key)
-
-            pn  = dff_u_sets["__pnorm"]
-            qty = pd.to_numeric(dff_u_sets.get("Quantity"), errors="coerce").fillna(0)
-
-            # Zlicz sztuki dla każdego zestawu po kluczu __pnorm
-            rows = []
-            total_sets = 0.0
-            for name in SETS_LIST_LOCAL:
-                key = _norm_key(name)  # np. "XLOffer+" → "xloffer"
-                cnt = float(qty[pn == key].sum())
-                rows.append({"Zestaw": name, "Sztuki": cnt})
-                total_sets += cnt
-
-            # Udziały %
-            for r in rows:
-                r["Udział (%)"] = (None if total_sets == 0 else round(r["Sztuki"] / total_sets * 100, 1))
-
-            df_sets_user = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
-
-            # Formatki
-            def _fmt_int(v):
-                try:
-                    return f"{int(v):,}".replace(",", " ")
-                except Exception:
-                    return ""
-
-            def _fmt_pct(v):
-                return "" if pd.isna(v) else f"{v:.1f} %"
-
-            styled_sets_user = df_sets_user.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
-            st.dataframe(styled_sets_user, use_container_width=True, hide_index=True)
-            st.caption(f"Razem zestawów (osoba): {int(total_sets):,}".replace(",", " "))
-
-            # Wykres kołowy — jak w 'Proporcje sprzedaży' → Zestawy
-            if total_sets > 0:
-                try:
-                    import altair as alt
-                    df_pie_u = df_sets_user.dropna(subset=["Udział (%)"]).copy()
-                    if not df_pie_u.empty:
-                        chart_pie_u = (
-                            alt.Chart(df_pie_u)
-                            .mark_arc()
-                            .encode(
-                                theta=alt.Theta(field="Sztuki", type="quantitative"),
-                                color=alt.Color(
-                                    field="Zestaw", type="nominal",
-                                    legend=alt.Legend(title="Zestaw", labelFontSize=16, titleFontSize=18, symbolSize=200)
-                                ),
-                                tooltip=[
-                                    alt.Tooltip("Zestaw:N"),
-                                    alt.Tooltip("Sztuki:Q", format=",.0f"),
-                                    alt.Tooltip("Udział (%):Q", format=".1f"),
-                                ],
-                            )
-                            .properties(width=380, height=360)
-                        )
-                        st.altair_chart(chart_pie_u, use_container_width=True)
-                except Exception as ex:
-                    st.caption("Nie udało się wyrenderować wykresu kołowego (zestawy — osoba).")
-    except Exception as ex:
-        st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
-
-
+    
 # ---------- Zakładka: Kreator Konkursów ----------
 with tab_comp:
     st.subheader("🧮 Kreator Konkursów")
