@@ -387,6 +387,9 @@ with tab_pivot:
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
     mask_sets = dff["__pnorm"].isin(SETS_NORM)
 
+    # % Merch (MERCH MENU + MERCH SOLO)
+    mask_merch = dff["__pnorm"].isin({"merchmenu", "merchsolo"})
+
     # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
     tx_bar_df = dff.copy()
     if "PosName" in tx_bar_df.columns:
@@ -412,6 +415,11 @@ with tab_pivot:
     else:
         tx_count = pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Int64")
 
+    # % Merch = (suma MERCH MENU + MERCH SOLO) / liczba transakcji * 100
+    # licznik po użytkownikach
+    merch_by_user = dff.loc[mask_merch].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
+    pct_merch = (merch_by_user / tx_count.astype("Float64").replace(0, pd.NA) * 100).astype("Float64").round(1)
+
     if ("TransactionId" in tx_df.columns) and ("NetAmount" in tx_df.columns):
         grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
         nun = grp.nunique(dropna=True)
@@ -434,10 +442,10 @@ with tab_pivot:
     result["% Extra Sos"] = pct_extra
     result["% Popcorny smakowe"] = pct_popcorny
     result["% ShareCorn"] = pct_sharecorn
-    
     result["% Zestawy"] = pct_sets
-    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy"]
-    
+    result["% Merch"] = pct_merch
+    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Merch"]
+
     result = result[order]
     result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
 
@@ -453,6 +461,11 @@ with tab_pivot:
         sets_sum = float(dff.loc[mask_sets, "Quantity"].sum())
         sets_den = int(tx_df["TransactionId"].nunique()) if "TransactionId" in tx_df.columns else 0
         pct_sets_c = (sets_sum / sets_den * 100) if sets_den else None
+        # % Merch — kino
+        merch_sum = float(dff.loc[mask_merch, "Quantity"].sum()) if "Quantity" in dff.columns else 0.0
+        merch_den = int(tx_df["TransactionId"].nunique()) if "TransactionId" in tx_df.columns else 0
+        pct_merch_c = (merch_sum / merch_den * 100) if merch_den else None
+
         if "TransactionId" in tx_df.columns and "NetAmount" in tx_df.columns:
             grp_all = tx_df.groupby("TransactionId")["NetAmount"]
             nun_all = grp_all.nunique(dropna=True)
@@ -470,6 +483,7 @@ with tab_pivot:
             "% Popcorny smakowe": [None if pct_pop_c is None else round(pct_pop_c, 1)],
             "% ShareCorn": [None if pct_share_c is None else round(pct_share_c, 1)],
             "% Zestawy": [None if pct_sets_c is None else round(pct_sets_c, 1)],
+            "% Merch": [None if pct_merch_c is None else round(pct_merch_c, 1)],
         }, index=["Średnia kina"])
         final_df = pd.concat([summary_row, result_sorted], axis=0)
     except Exception:
@@ -484,7 +498,7 @@ with tab_pivot:
         return ['font-weight:700; background-color:#f3f4f6' for _ in row] if row.name == "Średnia kina" else ['' for _ in row]
 
     styled = final_df.style.format({
-        "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct, "% Zestawy": _fmt_pct,
+        "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct, "% Zestawy": _fmt_pct, "% Merch": _fmt_pct,
         "Średnia wartość transakcji": _fmt_pln
     }).apply(_bold_and_shade, axis=1)
     st.dataframe(styled, use_container_width=True)
@@ -566,6 +580,9 @@ with tab_indy:
     mask_share_num = dff["__pnorm"].isin(SHARE_NUM_NORM)
     mask_share_den = dff["__pnorm"].isin(SHARE_DEN_NORM)
     mask_sets = dff["__pnorm"].isin(SETS_NORM)
+
+    # % Merch (MERCH MENU + MERCH SOLO)
+    mask_merch = dff["__pnorm"].isin({"merchmenu", "merchsolo"})
 
     # Liczba transakcji BAR (bez CAF/VIP) dla każdego zleceniobiorcy
     tx_bar_df = dff.copy()
