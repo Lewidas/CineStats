@@ -1851,12 +1851,12 @@ with tab_props:
             for label, orig in BULK_LABELS.items():
                 key = _norm_key(orig)
                 cnt = float(qty[pn == key].sum())
-                rows.append({"Produkt": label, "Sztuki": cnt})
+                rows.append({"Produkt": label, "Gramy:": cnt})
                 total_bulk += cnt
 
             # Udziały % (suma trzech pozycji = 100%)
             for r in rows:
-                r["Udział (%)"] = (None if total_bulk == 0 else round(r["Sztuki"] / total_bulk * 100, 1))
+                r["Udział (%)"] = (None if total_bulk == 0 else round(r["Gramy"] / total_bulk * 100, 1))
 
             df_bulk = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
 
@@ -1870,7 +1870,7 @@ with tab_props:
                 import pandas as pd
                 return "" if pd.isna(v) else f"{float(v):.1f} %"
 
-            styled_bulk = df_bulk.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            styled_bulk = df_bulk.style.format({"Gramy": _fmt_int, "Udział (%)": _fmt_pct})
             st.dataframe(styled_bulk, use_container_width=True, hide_index=True)
             st.caption(f"Razem (Bulk): {int(round(total_bulk)):,}".replace(",", " "))
 
@@ -1883,12 +1883,12 @@ with tab_props:
                         alt.Chart(df_pie_b)
                         .mark_arc()
                         .encode(
-                            theta=alt.Theta(field="Sztuki", type="quantitative"),
+                            theta=alt.Theta(field="Gramy", type="quantitative"),
                             color=alt.Color(field="Produkt", type="nominal",
                                             legend=alt.Legend(title="Produkt", labelFontSize=16, titleFontSize=18, symbolSize=200)),
                             tooltip=[
                                 alt.Tooltip("Produkt:N"),
-                                alt.Tooltip("Sztuki:Q", format=",.0f"),
+                                alt.Tooltip("Gramy:Q", format=",.0f"),
                                 alt.Tooltip("Udział (%):Q", format=".1f"),
                             ],
                         )
