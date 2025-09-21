@@ -353,17 +353,7 @@ with tab_pivot:
         mask_d = (df["__date"] >= d_from) & (df["__date"] <= d_to)
         dff = df.loc[mask_d].copy()
         dff = _exclude_caf_vip(dff)
-        st.markdown(
-            """
-            **Jak liczone są wskaźniki?**
-            
-            1) **% Extra Sos** – Suma sprzedanych extra sosów / sprzedane tacki nachos  
-            2) **% Popcorn Smakowy** – Suma sprzedanych popcornów smakowych / sprzedane opakowania popcorn  
-            3) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
-            4) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
-            5) **% Merch** – Suma sprzedanego merchu / wszystkie transakcje
-            """
-        )
+        
     else:
         df_all = df.copy()
 
@@ -374,7 +364,17 @@ with tab_pivot:
         vip_df  = _keep_vip(df_all)
 
         dff = bar_df
-
+    st.markdown(
+            """
+            **Jak liczone są wskaźniki?**
+            
+            1) **% Extra Sos** – Suma sprzedanych extra sosów / sprzedane tacki nachos  
+            2) **% Popcorn Smakowy** – Suma sprzedanych popcornów smakowych / sprzedane opakowania popcorn  
+            3) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
+            4) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
+            5) **% Merch** – Suma sprzedanego merchu / wszystkie transakcje
+            """
+        )
     users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
     required = {"UserFullName", "ProductName", "Quantity"}
     if not required.issubset(dff.columns):
