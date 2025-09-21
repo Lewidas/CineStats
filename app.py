@@ -1170,11 +1170,11 @@ with tab_best:
     
     # % Merch
     merch_by_user = dff.loc[mask_merch].groupby("UserFullName")["Quantity"].sum().reindex(users_sorted, fill_value=0)
-    tbl_merch = (merch_by_user / tx_bar_count.replace(0, pd.NA) * 100).astype("Float64")
+    tbl_merch = (merch_by_user / tx_bar_count_by_user.replace(0, pd.NA) * 100).astype("Float64")
     merch_sum = float(dff.loc[mask_merch, "Quantity"].sum())
-    tx_bar_total = int(tx_bar_count.sum()) if "tx_bar_count" in locals() else int((~tx_bar_count.isna()).sum())
+    tx_bar_total = int(tx_bar_count_by_user.sum()) if "tx_bar_count_by_user" in locals() else int((~tx_bar_count_by_user.isna()).sum())
     avg_merch = (merch_sum / tx_bar_total * 100) if tx_bar_total else None
-    df_merch = pd.DataFrame({"Wartość": tbl_merch, "Liczba transakcji bar": tx_bar_count}).sort_values("Wartość", ascending=False, na_position="last")
+    df_merch = pd.DataFrame({"Wartość": tbl_merch, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
     df_merch = df_merch.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
     st.markdown("#### % Merch")
     if avg_merch is not None: st.caption(f"Średnia kina: **{avg_merch:.1f} %**")
