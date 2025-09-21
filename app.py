@@ -1759,96 +1759,9 @@ with tab_props:
             if "__pnorm" in dff.columns:
                 pn = dff["__pnorm"].astype(str)
             else:
-                pn = dff["ProductName"].astype(str).str.upper().str.strip()
-                # lokalna normalizacja: alfanum + lower
-                pn = pn.apply(lambda s: "".join(ch for ch in s if ch.isalnum()).lower())
-    
-            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
-    
-            total_nachos = float(qty[pn.isin(BASE_NACHOS_KEYS_NORM)].sum())
-            serowe_cnt   = float(qty[pn == CHEESE_KEY_NORM].sum())
-            # BBQ = całość nachos - serowe
-            bbq_cnt = max(0.0, total_nachos - serowe_cnt)
-    
-            if total_nachos > 0:
-                serowe_pct = round(serowe_cnt / total_nachos * 100, 1)
-                bbq_pct    = round(100.0 - serowe_pct, 1)
-            else:
-                serowe_pct = None
-                bbq_pct    = None
-    
-            rows = [
-                {"Kategoria": "Nachos SEROWE", "Sztuki": serowe_cnt, "Udział (%)": serowe_pct},
-                {"Kategoria": "Nachos BBQ",    "Sztuki": bbq_cnt,    "Udział (%)": bbq_pct},
-            ]
-            df_nachos = pd.DataFrame(rows)
-    
-            def _fmt_int(v):
-                try:
-                    return f"{int(round(v)):,}".replace(",", " ")
-                except Exception:
-                    return ""
-            def _fmt_pct(v):
-                import pandas as pd
-                return "" if pd.isna(v) else f"{float(v):.1f} %"
-    
-            styled_nachos = df_nachos.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
-            st.dataframe(styled_nachos, use_container_width=True, hide_index=True)
-            st.caption(f"Łącznie tacki nachos (średnia + duża): {int(round(total_nachos)):,}".replace(",", " "))
-    
-            # Wykres kołowy: serowe vs BBQ
-            try:
-                import altair as alt
-                df_pie_n = df_nachos.dropna(subset=["Udział (%)"]).copy()
-                if not df_pie_n.empty:
-                    chart_pie_n = (
-                        alt.Chart(df_pie_n)
-                        .mark_arc()
-                        .encode(
-                            theta=alt.Theta(field="Sztuki", type="quantitative"),
-                            color=alt.Color(field="Kategoria", type="nominal",
-                                            legend=alt.Legend(title="Kategoria", labelFontSize=16, titleFontSize=18, symbolSize=200)),
-                            tooltip=[
-                                alt.Tooltip("Kategoria:N"),
-                                alt.Tooltip("Sztuki:Q", format=",.0f"),
-                                alt.Tooltip("Udział (%):Q", format=".1f"),
-                            ],
-                        )
-                        .properties(width=380, height=360)
-                        .configure_legend(
-                            labelFontSize=30,
-                            titleFontSize=35,
-                            symbolSize=400,   # (opcjonalnie)
-                        )   
-                    )
-                    st.altair_chart(chart_pie_n, use_container_width=True)
-            except Exception:
-                st.caption("Nie udało się wyrenderować wykresu kołowego (nachos).")
-    # --- Expander: Bulk ---
-    with st.expander("Bulk", expanded=False):
-        if dff.empty:
-            st.info("Brak danych w wybranym zakresie dat.")
-        else:
-            # Klucze trzech produktów (normalizowane jak w całej aplikacji)
-            # Mapowanie nazw wyświetlanych → oryginalne ProductName
-            LABELS = {
-                "Doti": "CzekoladkiDoti",
-                "Haribo": "HariboPM",
-                "Wawel": "WawelLuz100g",
-            }
-
-            # Wybór kolumny z nazwą produktu (znormalizowana jeśli dostępna)
-            if "__pnorm" in dff.columns:
-                pn = dff["__pnorm"].astype(str)
-                # przygotuj znormalizowane klucze
+                # Użyj tej samej normalizacji co w całej aplikacji
+                pn = dff["ProductName"].map(_norm_key).astype(str)
                 keys = {label: _norm_key(orig) for label, orig in LABELS.items()}
-            else:
-                pn = dff["ProductName"].astype(str).str.upper().str.strip()
-                # lokalna normalizacja na potrzeby dopasowania
-                def _local_norm(s: str) -> str:
-                    s = "".join(ch for ch in s if ch.isalnum()).lower()
-                    return s
-                keys = {label: _local_norm(orig) for label, orig in LABELS.items()}
 
             qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
 
