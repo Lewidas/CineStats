@@ -1824,3 +1824,82 @@ with tab_props:
                     st.altair_chart(chart_pie_n, use_container_width=True)
             except Exception:
                 st.caption("Nie udało się wyrenderować wykresu kołowego (nachos).")
+    # --- Expander: Bulk ---
+    with st.expander("Bulk", expanded=False):
+        if dff.empty:
+            st.info("Brak danych w wybranym zakresie dat.")
+        else:
+            # Klucze trzech produktów (normalizowane jak w całej aplikacji)
+            # Mapowanie nazw wyświetlanych → oryginalne ProductName
+            LABELS = {
+                "Doti": "CzekoladkiDoti",
+                "Haribo": "HariboPM",
+                "Wawel": "WawelLuz100g",
+            }
+
+            # Wybór kolumny z nazwą produktu (znormalizowana jeśli dostępna)
+            if "__pnorm" in dff.columns:
+                pn = dff["__pnorm"].astype(str)
+                # przygotuj znormalizowane klucze
+                keys = {label: _norm_key(orig) for label, orig in LABELS.items()}
+            else:
+                pn = dff["ProductName"].astype(str).str.upper().str.strip()
+                # lokalna normalizacja na potrzeby dopasowania
+                def _local_norm(s: str) -> str:
+                    s = "".join(ch for ch in s if ch.isalnum()).lower()
+                    return s
+                keys = {label: _local_norm(orig) for label, orig in LABELS.items()}
+
+            qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
+
+            # Zlicz sztuki dla każdego z produktów
+            rows = []
+            total_bulk = 0.0
+            for label, key in keys.items():
+                cnt = float(qty[pn == key].sum())
+                rows.append({"Produkt": label, "Sztuki": cnt})
+                total_bulk += cnt
+
+            # Udziały %, suma = 100% (w obrębie trzech produktów)
+            for r in rows:
+                r["Udział (%)"] = (None if total_bulk == 0 else round(r["Sztuki"] / total_bulk * 100, 1))
+
+            df_bulk = pd.DataFrame(rows).sort_values("Udział (%)", ascending=False, na_position="last")
+
+            # Formatowanie tabeli
+            def _fmt_int(v):
+                try:
+                    return f"{int(round(v)):,}".replace(",", " ")
+                except Exception:
+                    return ""
+            def _fmt_pct(v):
+                import pandas as pd
+                return "" if pd.isna(v) else f"{float(v):.1f} %"
+
+            styled_bulk = df_bulk.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
+            st.dataframe(styled_bulk, use_container_width=True, hide_index=True)
+            st.caption(f"Razem (Bulk): {int(round(total_bulk)):,}".replace(",", " "))
+
+            # Wykres kołowy
+            try:
+                import altair as alt
+                df_pie_b = df_bulk.dropna(subset=["Udział (%)"]).copy()
+                if not df_pie_b.empty:
+                    chart_pie_b = (
+                        alt.Chart(df_pie_b)
+                        .mark_arc()
+                        .encode(
+                            theta=alt.Theta(field="Sztuki", type="quantitative"),
+                            color=alt.Color(field="Produkt", type="nominal",
+                                            legend=alt.Legend(title="Produkt", labelFontSize=16, titleFontSize=18, symbolSize=200)),
+                            tooltip=[
+                                alt.Tooltip("Produkt:N"),
+                                alt.Tooltip("Sztuki:Q", format=",.0f"),
+                                alt.Tooltip("Udział (%):Q", format=".1f"),
+                            ],
+                        )
+                        .properties(width=380, height=360)
+                    )
+                    st.altair_chart(chart_pie_b, use_container_width=True)
+            except Exception:
+                st.caption("Nie udało się wyrenderować wykresu kołowego (Bulk).")
