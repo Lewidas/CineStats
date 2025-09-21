@@ -1851,7 +1851,7 @@ with tab_props:
             for label, orig in BULK_LABELS.items():
                 key = _norm_key(orig)
                 cnt = float(qty[pn == key].sum())
-                rows.append({"Produkt": label, "Gramy:": cnt})
+                rows.append({"Produkt": label, "Gramy": cnt})
                 total_bulk += cnt
 
             # Udziały % (suma trzech pozycji = 100%)
