@@ -628,6 +628,11 @@ with tab_indy:
         sets_sum = float(dff.loc[mask_sets, "Quantity"].sum()) if "Quantity" in dff.columns else 0.0
         sets_den = int(tx_df_all["TransactionId"].nunique()) if "TransactionId" in tx_df_all.columns else 0
         pct_sets_cinema = (sets_sum / sets_den * 100) if sets_den else None
+
+        # % Merch — kino (bar): (MERCH MENU + MERCH SOLO) / liczba transakcji bar
+        merch_sum_cinema = float(dff.loc[mask_merch, "Quantity"].sum()) if "Quantity" in dff.columns else 0.0
+        merch_den_cinema = sets_den
+        pct_merch_cinema = (merch_sum_cinema / merch_den_cinema * 100) if merch_den_cinema else None
     except Exception:
         pct_extra_cinema = pct_popcorny_cinema = pct_sharecorn_cinema = pct_sets_cinema = avg_tr_cinema = None
 
@@ -666,6 +671,13 @@ with tab_indy:
             except Exception:
                 sets_sum_u = 0.0
             pct_sets_u = (sets_sum_u / tx_count_u * 100) if tx_count_u else None
+
+            # % Merch — użytkownik (bar): (MERCH MENU + MERCH SOLO) / liczba transakcji bar użytkownika
+            try:
+                merch_sum_u = float(dff_u.loc[mask_merch, "Quantity"].sum())
+            except Exception:
+                merch_sum_u = 0.0
+            pct_merch_u = (merch_sum_u / tx_count_u * 100) if tx_count_u else None
 
         else:
             avg_tr_u = None; tx_count_u = None
@@ -715,7 +727,7 @@ with tab_indy:
     has_cafe = (avg_tr_cafe_u is not None)
     has_vip  = (avg_tr_vip_u is not None)
     has_any_money = has_bar or has_cafe or has_vip
-    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u])
+    has_pct = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, (pct_merch_u if 'pct_merch_u' in locals() else None)])
     
     rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
@@ -724,7 +736,8 @@ with tab_indy:
         ["% Extra Sos",           pct_extra_u,      pct_extra_cinema,      _fmt_diff_pp(pct_extra_u,      pct_extra_cinema)],
         ["% Popcorny smakowe",    pct_popcorny_u,   pct_popcorny_cinema,   _fmt_diff_pp(pct_popcorny_u,   pct_popcorny_cinema)],
         ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
-            ["% Zestawy",           pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
+        ["% Zestawy",           pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
+        ["% Merch",             pct_merch_u if "pct_merch_u" in locals() else None,  pct_merch_cinema if "pct_merch_cinema" in locals() else None,  _fmt_diff_pp(pct_merch_u if "pct_merch_u" in locals() else None, pct_merch_cinema if "pct_merch_cinema" in locals() else None)],
 ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
@@ -891,9 +904,9 @@ with tab_indy:
 # Wskaźniki % (facet)
     if has_pct:
         st.caption("Wskaźniki procentowe")
-        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn"]
-        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u]
-        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema]
+        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Merch"]
+        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, (pct_merch_u if "pct_merch_u" in locals() else None)]
+        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema, (pct_merch_cinema if "pct_merch_cinema" in locals() else None)]
         rows = []
         for m, u, c in zip(metrics, user_vals, cinema_vals):
             if u is None:
