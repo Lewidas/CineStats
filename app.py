@@ -1252,6 +1252,16 @@ with tab_comp:
         dff = df.loc[mask].copy()
     else:
         dff = df.copy()
+        
+    st.markdown(
+            """
+            **Jak działa kreator?**
+            
+            W "Produkty i Punktacja" wybierz produkty które chcesz uwzględniać w swoim konkursie oraz za ile punktów mają być punktowane.
+            W "Mianownik współczynnika" wybierz przez co chcesz dzielić twój wynik, jeśli nie planujesz go przez nic dzielić po prostu wybierz "Stała 1".
+            Jeśli twój konkurs zakłada minimum transakcji wpisz je, program wyświetli dwie tabele, jedną z osobami które spełniły minimum i drugą z tymi, którzy się nie zakwalifikowali :D
+            """
+        )
 
     required = {"UserFullName", "ProductName", "Quantity"}
     if not required.issubset(dff.columns):
@@ -1505,16 +1515,6 @@ with tab_cafe:
         dff = df.loc[mask_d].copy()
     else:
         dff = df.copy()
-        
-    st.markdown(
-            """
-            **Jak działa kreator?**
-            
-            W "Produkty i Punktacja" wybierz produkty które chcesz uwzględniać w swoim konkursie oraz za ile punktów mają być punktowane.
-            W "Mianownik współczynnika" wybierz przez co chcesz dzielić twój wynik, jeśli nie planujesz go przez nic dzielić po prostu wybierz "Stała 1".
-            Jeśli twój konkurs zakłada minimum transakcji wpisz je, program wyświetli dwie tabele, jedną z osobami które spełniły minimum i drugą z tymi, którzy się nie zakwalifikowali :D
-            """
-        )
 
     required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
     if not required.issubset(dff.columns):
