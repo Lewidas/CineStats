@@ -368,11 +368,13 @@ with tab_pivot:
             """
             **Jak liczone są wskaźniki?**
             
-            1) **% Extra Sos** – Suma sprzedanych extra sosów / sprzedane tacki nachos  
-            2) **% Popcorn Smakowy** – Suma sprzedanych popcornów smakowych / sprzedane opakowania popcorn  
-            3) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
-            4) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
-            5) **% Merch** – Suma sprzedanego merchu / wszystkie transakcje
+            1) **Liczba transakcji** - tylko transakcje barowe
+            2) **Średnia wartość transakcji** - średnia wartość **netto** transakcji barowych
+            3) **% Extra Sos** – Suma sprzedanych extra sosów / sprzedane tacki nachos  
+            4) **% Popcorn Smakowy** – Suma sprzedanych popcornów smakowych / sprzedane opakowania popcorn  
+            5) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
+            6) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje barowe *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
+            7) **% Merch** – Suma sprzedanego merchu / wszystkie transakcje barowe
             """
         )
     users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
@@ -1503,6 +1505,16 @@ with tab_cafe:
         dff = df.loc[mask_d].copy()
     else:
         dff = df.copy()
+        
+    st.markdown(
+            """
+            **Jak działa kreator?**
+            
+            W "Produkty i Punktacja" wybierz produkty które chcesz uwzględniać w swoim konkursie oraz za ile punktów mają być punktowane.
+            W "Mianownik współczynnika" wybierz przez co chcesz dzielić twój wynik, jeśli nie planujesz go przez nic dzielić po prostu wybierz "Stała 1".
+            Jeśli twój konkurs zakłada minimum transakcji wpisz je, program wyświetli dwie tabele, jedną z osobami które spełniły minimum i drugą z tymi, którzy się nie zakwalifikowali :D
+            """
+        )
 
     required = {"UserFullName", "TransactionId", "NetAmount", "PosName"}
     if not required.issubset(dff.columns):
