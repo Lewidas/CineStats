@@ -674,11 +674,16 @@ with tab_indy:
     c2.metric("Liczba transakcji — cafe (CAF)", _fmt_int(tx_cafe))
     c3.metric("Liczba transakcji — VIP", _fmt_int(tx_vip))
 
-    # Formatowanie tabeli: PLN dla wierszy "Średnia wartość transakcji", % dla reszty
+    # Formatowanie tabeli: PLN dla wierszy "Średnia wartość transakcji", % dla reszty.
+    # Budujemy całe kolumny stringów naraz (zamiast wstawiać stringi do kolumn float
+    # przez .loc — pandas 3.x by to odrzucił).
     disp = df_view.copy()
     money_mask = disp["Wskaźnik"].str.startswith("Średnia wartość transakcji")
-    disp.loc[money_mask, [sel_user, "Średnia kina"]] = disp.loc[money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pln)
-    disp.loc[~money_mask, [sel_user, "Średnia kina"]] = disp.loc[~money_mask, [sel_user, "Średnia kina"]].applymap(_fmt_pct)
+    for _col in [sel_user, "Średnia kina"]:
+        disp[_col] = [
+            ("" if pd.isna(v) else (_fmt_pln(v) if is_money else _fmt_pct(v)))
+            for v, is_money in zip(disp[_col].tolist(), money_mask.tolist())
+        ]
     # --- Kolorowanie kolumny różnicy vs. kino ---
     try:
         def __cs_num__(x):
@@ -705,7 +710,7 @@ with tab_indy:
         _cols = list(disp.columns)
         _delta_col = "Δ vs kino" if "Δ vs kino" in _cols else (_cols[-1] if _cols else None)
         if _delta_col is not None:
-            _styled = disp.style.applymap(__cs_color__, subset=[_delta_col])
+            _styled = disp.style.map(__cs_color__, subset=[_delta_col])
             st.dataframe(_styled, use_container_width=True, hide_index=True)
         else:
             st.dataframe(disp, use_container_width=True, hide_index=True)
@@ -947,7 +952,7 @@ with tab_best:
                 return "background-color: #dcfce7; font-weight: 600" if ok else ""
             except Exception:
                 return ""
-        sty = df_in.style.applymap(_color, subset=["Wartość"])
+        sty = df_in.style.map(_color, subset=["Wartość"])
         return sty.format({"Wartość": _fmt_pct if is_pct else _fmt_pln})
 
     def _rank_table(value_series):
