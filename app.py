@@ -450,6 +450,41 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     return {"users": users, "per_user": per_user, "cinema": cinema}
 
 
+# ---------- Wspólny wykres udziałów: posortowane poziome słupki ----------
+def share_bar_chart(df_in: pd.DataFrame, cat_col: str, val_col: str,
+                    pct_col: str = "Udział (%)", height_per_bar: int = 32):
+    """Posortowany poziomy wykres słupkowy udziałów — zastępuje wykresy kołowe.
+    Oko porównuje długości znacznie lepiej niż kąty, długie nazwy się mieszczą,
+    a kategorie stoją przy słupkach, więc legenda (i jej rozjechane fonty) znika."""
+    if df_in is None or df_in.empty or pct_col not in df_in.columns:
+        return None
+    d = df_in.dropna(subset=[pct_col]).copy()
+    if d.empty:
+        return None
+    d[val_col] = pd.to_numeric(d[val_col], errors="coerce").fillna(0.0)
+    d = d.sort_values(val_col, ascending=False)
+    order = d[cat_col].astype(str).tolist()
+    d["__lab"] = d[pct_col].map(lambda v: "" if pd.isna(v) else f"{float(v):.1f} %".replace(".", ","))
+    vmax = float(d[val_col].max())
+    if vmax <= 0:
+        return None
+    _scale = alt.Scale(domain=[0, vmax * 1.18], nice=False)  # zapas na etykiety
+    base = alt.Chart(d)
+    bars = base.mark_bar(size=20, cornerRadiusEnd=3, color="#2a78d6").encode(
+        y=alt.Y(f"{cat_col}:N", sort=order, title=None, axis=alt.Axis(labelFontSize=13, labelLimit=200)),
+        x=alt.X(f"{val_col}:Q", title=val_col, scale=_scale, axis=alt.Axis(labelFontSize=11)),
+        tooltip=[alt.Tooltip(f"{cat_col}:N"),
+                 alt.Tooltip(f"{val_col}:Q", format=",.0f"),
+                 alt.Tooltip(f"{pct_col}:Q", format=".1f")],
+    )
+    labels = base.mark_text(align="left", dx=6, fontSize=12).encode(
+        y=alt.Y(f"{cat_col}:N", sort=order, title=None),
+        x=alt.X(f"{val_col}:Q", scale=_scale),
+        text=alt.Text("__lab:N"),
+    )
+    return (bars + labels).properties(height=max(130, height_per_bar * len(d)))
+
+
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
     st.subheader("📈 Tabela wskaźników")
@@ -815,82 +850,70 @@ with tab_indy:
     else:
         st.info("Brak danych do wykresów średniej wartości transakcji dla wybranej osoby.")
 
-    # Wskaźniki procentowe (facet: Extra Sos / Popcorny / ShareCorn)
+    # Wskaźniki procentowe — JEDEN wykres porównawczy (dumbbell) zamiast osobnych wykresów.
+    # Każdy wiersz: szara kropka = średnia kina, kolorowa kropka = osoba, linia = luka.
     if has_pct:
-        st.caption("Wskaźniki procentowe")
-        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Nachos Serowe", "% Chipsy"]
-        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_nachos_serowe_u, pct_chipsy_u]
-        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema, pct_nachos_serowe_cinema, pct_chipsy_cinema]
-        rows = []
-        for mname, u, c in zip(metrics, user_vals, cinema_vals):
-            if u is None:
+        st.markdown("#### Wskaźniki procentowe — porównanie ze średnią kina")
+        _pct_defs = [
+            ("% Extra Sos",        pct_extra_u,         pct_extra_cinema),
+            ("% Popcorny smakowe", pct_popcorny_u,      pct_popcorny_cinema),
+            ("% ShareCorn",        pct_sharecorn_u,     pct_sharecorn_cinema),
+            ("% Zestawy",          pct_sets_u,          pct_sets_cinema),
+            ("% Nachos Serowe",    pct_nachos_serowe_u, pct_nachos_serowe_cinema),
+            ("% Chipsy",           pct_chipsy_u,        pct_chipsy_cinema),
+        ]
+        rows_db = []
+        for mname, uv, cv in _pct_defs:
+            if uv is None:
                 continue
-            uval = u
-            cval = 0.0 if c is None else c
-            ucol = _gray if (c is None) else (_green if uval >= cval else _red)
-            label = ""
-            if c is not None:
+            uval = float(uv)
+            has_c = cv is not None
+            cval = float(cv) if has_c else uval  # brak średniej → zerowa linia, nie linia do 0
+            ucol = _gray if not has_c else (_green if uval >= cval else _red)
+            lab = ""
+            if has_c:
                 d = uval - cval
-                s = "+" if d >= 0 else "−"
-                label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-            rows.append({"Wskaźnik": mname, "Kto": sel_user, "Wartość": float(uval), "kolor": ucol, "diff_label": label, "label_color": ucol})
-            rows.append({"Wskaźnik": mname, "Kto": "Średnia kina", "Wartość": float(cval), "kolor": _gray, "diff_label": "", "label_color": _gray})
+                lab = ("+" if d >= 0 else "−") + f"{abs(d):.1f}".replace(".", ",") + " p.p."
+            rows_db.append({"Wskaźnik": mname, "Osoba": uval, "Kino": cval, "kolor": ucol, "diff_label": lab})
 
-        if rows:
-            df_chart_pct = pd.DataFrame(rows)
-            base_pct = alt.Chart(df_chart_pct)
-            bars_pct = base_pct.mark_bar(size=28).encode(
-                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-                y=alt.Y("Wartość:Q", title="%"),
+        if rows_db:
+            df_db = pd.DataFrame(rows_db)
+            order_y = df_db["Wskaźnik"].tolist()
+            _vmax = float(max(100.0, float(df_db[["Osoba", "Kino"]].to_numpy().max())))
+            _x_scale = alt.Scale(domain=[0, _vmax * 1.14], nice=False)  # zapas na etykiety różnic
+            _x_axis = alt.Axis(title="%", values=[0, 25, 50, 75, 100]) if _vmax <= 100.0 else alt.Axis(title="%")
+            _y = alt.Y("Wskaźnik:N", sort=order_y, title=None, axis=alt.Axis(labelFontSize=13, labelLimit=180))
+            base_db = alt.Chart(df_db)
+            conn_db = base_db.mark_rule(strokeWidth=3, opacity=0.35).encode(
+                y=_y,
+                x=alt.X("Kino:Q", scale=_x_scale, axis=_x_axis),
+                x2=alt.X2("Osoba:Q"),
                 color=alt.Color("kolor:N", legend=None, scale=None),
-                tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
             )
-            labels_pct = base_pct.mark_text(dy=-6, size=18).encode(
-                x=alt.X("Kto:N", title="", sort=[sel_user, "Średnia kina"]),
-                y=alt.Y("Wartość:Q"),
+            dot_kino = base_db.mark_circle(size=120, color=_gray).encode(
+                y=_y,
+                x=alt.X("Kino:Q", scale=_x_scale, axis=_x_axis),
+                tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Kino:Q", format=".1f", title="Średnia kina")],
+            )
+            dot_user = base_db.mark_circle(size=190).encode(
+                y=_y,
+                x=alt.X("Osoba:Q", scale=_x_scale, axis=_x_axis),
+                color=alt.Color("kolor:N", legend=None, scale=None),
+                tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Osoba:Q", format=".1f", title=str(sel_user))],
+            )
+            lab_db = base_db.mark_text(align="left", dx=12, fontSize=12).encode(
+                y=_y,
+                x=alt.X("Osoba:Q", scale=_x_scale, axis=_x_axis),
                 text=alt.Text("diff_label:N"),
-                color=alt.Color("label_color:N", legend=None, scale=None)
+                color=alt.Color("kolor:N", legend=None, scale=None),
             )
-            rule_pct = base_pct.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(strokeDash=[6,4], color="#6b7280", opacity=0.8).encode(y="Wartość:Q")
-            chart_pct = (bars_pct + labels_pct + rule_pct).properties(width=360, height=480).facet(column=alt.Column("Wskaźnik:N", header=alt.Header(title=None)))
-            st.altair_chart(chart_pct, use_container_width=True)
+            st.altair_chart(
+                (conn_db + dot_kino + dot_user + lab_db).properties(height=max(200, 46 * len(df_db))),
+                use_container_width=True,
+            )
+            st.caption("Szara kropka = średnia kina · kolorowa kropka = wybrany zleceniobiorca · etykieta = różnica w p.p.")
     else:
         st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
-
-    # --- Osobny wykres: % Zestawy ---
-    if pct_sets_u is not None:
-        st.markdown("#### % Zestawy")
-        uval = float(pct_sets_u)
-        cval = 0.0 if (pct_sets_cinema is None) else float(pct_sets_cinema)
-        ucol = _gray if (pct_sets_cinema is None) else (_green if uval >= cval else _red)
-        label = ""
-        if pct_sets_cinema is not None:
-            d = uval - cval
-            s = "+" if d >= 0 else "−"
-            label = s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
-
-        df_chart_sets = pd.DataFrame([
-            {"Kto": sel_user, "Wartość": uval, "kolor": ucol, "diff_label": label, "label_color": ucol},
-            {"Kto": "Średnia kina", "Wartość": cval, "kolor": _gray, "diff_label": "", "label_color": _gray},
-        ])
-        base_sets = alt.Chart(df_chart_sets)
-        bars_sets = base_sets.mark_bar(size=28).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q", title="%"),
-            color=alt.Color("kolor:N", legend=None, scale=None),
-            tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=".1f")]
-        )
-        labels_sets = base_sets.mark_text(dy=-6, size=18).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q"),
-            text=alt.Text("diff_label:N"),
-            color=alt.Color("label_color:N", legend=None, scale=None)
-        )
-        rule_sets = base_sets.transform_filter(alt.datum.Kto == "Średnia kina").mark_rule(
-            strokeDash=[6,4], color="#6b7280", opacity=0.8
-        ).encode(y="Wartość:Q")
-        chart_sets = (bars_sets + labels_sets + rule_sets).properties(width=360, height=480)
-        st.altair_chart(chart_sets, use_container_width=False)
 
     # --- Struktura sprzedaży — zestawy (osoba) ---
     st.markdown("### 🧩 Struktura sprzedaży — zestawy (osoba)")
@@ -929,28 +952,11 @@ with tab_indy:
 
             if total_sets > 0:
                 try:
-                    df_pie_u = df_sets_user.dropna(subset=["Udział (%)"]).copy()
-                    if not df_pie_u.empty:
-                        chart_pie_u = (
-                            alt.Chart(df_pie_u)
-                            .mark_arc()
-                            .encode(
-                                theta=alt.Theta(field="Sztuki", type="quantitative"),
-                                color=alt.Color(
-                                    field="Zestaw", type="nominal",
-                                    legend=alt.Legend(title="Zestaw", labelFontSize=16, titleFontSize=18, symbolSize=200)
-                                ),
-                                tooltip=[
-                                    alt.Tooltip("Zestaw:N"),
-                                    alt.Tooltip("Sztuki:Q", format=",.0f"),
-                                    alt.Tooltip("Udział (%):Q", format=".1f"),
-                                ],
-                            )
-                            .properties(width=380, height=360)
-                        )
-                        st.altair_chart(chart_pie_u, use_container_width=True)
+                    _ch_u = share_bar_chart(df_sets_user, "Zestaw", "Sztuki")
+                    if _ch_u is not None:
+                        st.altair_chart(_ch_u, use_container_width=True)
                 except Exception:
-                    st.caption("Nie udało się wyrenderować wykresu kołowego (zestawy — osoba).")
+                    st.caption("Nie udało się wyrenderować wykresu udziałów (zestawy — osoba).")
     except Exception as ex:
         st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
 
@@ -981,67 +987,87 @@ with tab_best:
     tx_bar_count_by_user = pu["tx_count"] if not pu.empty else pd.Series(dtype="Int64")
     empty_series = pd.Series(dtype="Float64")
 
-    def style_over_avg(df_in: pd.DataFrame, avg_val, is_pct: bool):
-        def _fmt_pct(x): return "" if pd.isna(x) else f"{x:.1f} %"
-        def _fmt_pln(x):
-            if pd.isna(x): return ""
-            s = f"{x:,.2f}".replace(",", " ").replace(".", ","); return s + " zł"
-        def _color(v):
-            try:
-                ok = (not pd.isna(v)) and (avg_val is not None) and (not pd.isna(avg_val)) and (v >= avg_val)
-                return "background-color: #dcfce7; font-weight: 600" if ok else ""
-            except Exception:
-                return ""
-        sty = df_in.style.map(_color, subset=["Wartość"])
-        return sty.format({"Wartość": _fmt_pct if is_pct else _fmt_pln})
+    def _rank_table(value_series, avg_val):
+        """Ranking + kolumna różnicy do średniej kina (surowe liczby — formatuje column_config)."""
+        v = pd.to_numeric(pd.Series(value_series), errors="coerce").astype(float)
+        if (avg_val is not None) and (not pd.isna(avg_val)):
+            delta = v - float(avg_val)
+        else:
+            delta = pd.Series(float("nan"), index=v.index, dtype=float)
+        t = pd.DataFrame({
+            "Wartość": v,
+            "Δ vs kino": delta,
+            "Liczba transakcji bar": tx_bar_count_by_user,
+        }).sort_values("Wartość", ascending=False, na_position="last")
+        return t.rename_axis("Zleceniobiorca").reset_index()[
+            ["Zleceniobiorca", "Liczba transakcji bar", "Wartość", "Δ vs kino"]
+        ]
 
-    def _rank_table(value_series):
-        t = pd.DataFrame({"Wartość": value_series, "Liczba transakcji bar": tx_bar_count_by_user}).sort_values("Wartość", ascending=False, na_position="last")
-        return t.rename_axis("Zleceniobiorca").reset_index()[["Zleceniobiorca","Liczba transakcji bar","Wartość"]]
+    def _show_rank(df_in: pd.DataFrame, is_pct: bool):
+        """Renderuje ranking z paskiem postępu w komórce zamiast gołej liczby."""
+        vals = pd.to_numeric(df_in["Wartość"], errors="coerce")
+        top = float(vals.max()) if vals.notna().any() else 0.0
+        if is_pct:
+            top = max(100.0, top)  # skala 0–100 %, rozszerzana tylko gdy ktoś ją przebije
+            val_cfg = st.column_config.ProgressColumn("Wartość", format="%.1f%%", min_value=0.0, max_value=top, width="medium")
+            delta_cfg = st.column_config.NumberColumn("Δ vs kino", format="%+.1f p.p.", width="small")
+        else:
+            top = top if top > 0 else 1.0
+            val_cfg = st.column_config.ProgressColumn("Wartość", format="%.2f zł", min_value=0.0, max_value=top, width="medium")
+            delta_cfg = st.column_config.NumberColumn("Δ vs kino", format="%+.2f zł", width="small")
+        st.dataframe(
+            df_in, use_container_width=True, hide_index=True,
+            column_config={
+                "Zleceniobiorca": st.column_config.TextColumn("Zleceniobiorca", width="medium"),
+                "Liczba transakcji bar": st.column_config.NumberColumn("Transakcje", format="%d", width="small"),
+                "Wartość": val_cfg,
+                "Δ vs kino": delta_cfg,
+            },
+        )
 
     # % Extra Sos
     st.markdown("#### % Extra Sos")
-    df_extra = _rank_table(pu["pct_extra"] if not pu.empty else empty_series)
     avg_extra = cin.get("pct_extra")
+    df_extra = _rank_table(pu["pct_extra"] if not pu.empty else empty_series, avg_extra)
     if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
-    st.dataframe(style_over_avg(df_extra, avg_extra, is_pct=True), use_container_width=True, hide_index=True)
+    _show_rank(df_extra, is_pct=True)
 
     # % Popcorny smakowe
     st.markdown("#### % Popcorny smakowe")
-    df_pop = _rank_table(pu["pct_popcorny"] if not pu.empty else empty_series)
     avg_pop = cin.get("pct_popcorny")
+    df_pop = _rank_table(pu["pct_popcorny"] if not pu.empty else empty_series, avg_pop)
     if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
-    st.dataframe(style_over_avg(df_pop, avg_pop, is_pct=True), use_container_width=True, hide_index=True)
+    _show_rank(df_pop, is_pct=True)
 
     # % ShareCorn
     st.markdown("#### % ShareCorn")
-    df_share = _rank_table(pu["pct_sharecorn"] if not pu.empty else empty_series)
     avg_share = cin.get("pct_sharecorn")
+    df_share = _rank_table(pu["pct_sharecorn"] if not pu.empty else empty_series, avg_share)
     if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
-    st.dataframe(style_over_avg(df_share, avg_share, is_pct=True), use_container_width=True, hide_index=True)
+    _show_rank(df_share, is_pct=True)
 
     # % Nachos Serowe
     st.markdown("#### % Nachos Serowe")
-    df_serowe = _rank_table(pu["pct_nachos_serowe"] if not pu.empty else empty_series)
     avg_serowe = cin.get("pct_nachos_serowe")
+    df_serowe = _rank_table(pu["pct_nachos_serowe"] if not pu.empty else empty_series, avg_serowe)
     if avg_serowe is not None: st.caption(f"Średnia kina: **{avg_serowe:.1f} %**")
-    st.dataframe(style_over_avg(df_serowe, avg_serowe, is_pct=True), use_container_width=True, hide_index=True)
+    _show_rank(df_serowe, is_pct=True)
 
     # % Chipsy
     st.markdown("#### % Chipsy")
-    df_chipsy = _rank_table(pu["pct_chipsy"] if not pu.empty else empty_series)
     avg_chipsy = cin.get("pct_chipsy")
+    df_chipsy = _rank_table(pu["pct_chipsy"] if not pu.empty else empty_series, avg_chipsy)
     if avg_chipsy is not None: st.caption(f"Średnia kina: **{avg_chipsy:.1f} %**")
-    st.dataframe(style_over_avg(df_chipsy, avg_chipsy, is_pct=True), use_container_width=True, hide_index=True)
+    _show_rank(df_chipsy, is_pct=True)
 
     # Średnia wartość transakcji
     st.markdown("#### Średnia wartość transakcji")
     if {"TransactionId", "NetAmount"}.issubset(dff.columns):
-        df_avg = _rank_table(pu["avg_tx"] if not pu.empty else empty_series)
         avg_global = cin.get("avg_tx")
+        df_avg = _rank_table(pu["avg_tx"] if not pu.empty else empty_series, avg_global)
         if avg_global is not None:
             st.caption(f"Średnia kina: **{avg_global:,.2f} zł**".replace(",", " ").replace(".", ","))
-        st.dataframe(style_over_avg(df_avg, avg_global, is_pct=False), use_container_width=True, hide_index=True)
+        _show_rank(df_avg, is_pct=False)
     else:
         st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
 
@@ -1559,34 +1585,16 @@ with tab_props:
             styled = df_sets.style.format({"Sztuki": _fmt_int, "Udział (%)": _fmt_pct})
             st.dataframe(styled, use_container_width=True, hide_index=True)
             st.caption(f"Razem zestawów w okresie: {int(total_sets):,}".replace(",", " "))
-                # --- Wykres kołowy: udziały zestawów ---
-        try:
-            import altair as alt  # lokalny import, nie wymaga zmian w nagłówku pliku
-            df_pie = df_sets.dropna(subset=["Udział (%)"]).copy()
-            if not df_pie.empty:
-                chart_pie = (
-                    alt.Chart(df_pie)
-                    .mark_arc()
-                    .encode(
-                        theta=alt.Theta(field="Sztuki", type="quantitative"),
-                        color=alt.Color(field="Zestaw", type="nominal", legend=alt.Legend(title="Zestaw")),
-                        tooltip=[
-                            alt.Tooltip("Zestaw:N"),
-                            alt.Tooltip("Sztuki:Q", format=",.0f"),
-                            alt.Tooltip("Udział (%):Q", format=".1f"),
-                        ],
-                    )
-                    .properties(width=380, height=360)
-                    .configure_legend(
-                        labelFontSize=30,
-                        titleFontSize=35,
-                        symbolSize=400,   # (opcjonalnie)
-                    )
-                )
-                st.altair_chart(chart_pie, use_container_width=True)
-        except Exception:
-            st.caption("Nie udało się wyrenderować wykresu kołowego.")
-            
+
+            # --- Wykres udziałów zestawów (poziome słupki) ---
+            try:
+                _ch_sets = share_bar_chart(df_sets, "Zestaw", "Sztuki")
+                if _ch_sets is not None:
+                    st.altair_chart(_ch_sets, use_container_width=True)
+            except Exception:
+                st.caption("Nie udało się wyrenderować wykresu udziałów.")
+
+
     # --- Expander: Nachos BBQ vs serowe ---
     with st.expander("Nachos BBQ vs serowe", expanded=False):
         if dff.empty:
@@ -1637,34 +1645,13 @@ with tab_props:
             st.dataframe(styled_nachos, use_container_width=True, hide_index=True)
             st.caption(f"Łącznie tacki nachos (średnia + duża): {int(round(total_nachos)):,}".replace(",", " "))
     
-            # Wykres kołowy: serowe vs BBQ
+            # Wykres udziałów: serowe vs BBQ (poziome słupki)
             try:
-                import altair as alt
-                df_pie_n = df_nachos.dropna(subset=["Udział (%)"]).copy()
-                if not df_pie_n.empty:
-                    chart_pie_n = (
-                        alt.Chart(df_pie_n)
-                        .mark_arc()
-                        .encode(
-                            theta=alt.Theta(field="Sztuki", type="quantitative"),
-                            color=alt.Color(field="Kategoria", type="nominal",
-                                            legend=alt.Legend(title="Kategoria", labelFontSize=16, titleFontSize=18, symbolSize=200)),
-                            tooltip=[
-                                alt.Tooltip("Kategoria:N"),
-                                alt.Tooltip("Sztuki:Q", format=",.0f"),
-                                alt.Tooltip("Udział (%):Q", format=".1f"),
-                            ],
-                        )
-                        .properties(width=380, height=360)
-                        .configure_legend(
-                            labelFontSize=30,
-                            titleFontSize=35,
-                            symbolSize=400,   # (opcjonalnie)
-                        )   
-                    )
-                    st.altair_chart(chart_pie_n, use_container_width=True)
+                _ch_n = share_bar_chart(df_nachos, "Kategoria", "Sztuki")
+                if _ch_n is not None:
+                    st.altair_chart(_ch_n, use_container_width=True)
             except Exception:
-                st.caption("Nie udało się wyrenderować wykresu kołowego (nachos).")
+                st.caption("Nie udało się wyrenderować wykresu udziałów (nachos).")
     # --- Expander: Bulk ---
     with st.expander("Bulk", expanded=False):
         if dff.empty:
@@ -1706,26 +1693,10 @@ with tab_props:
             st.dataframe(styled_bulk, use_container_width=True, hide_index=True)
             st.caption(f"Razem (Bulk): {int(round(total_bulk)):,}".replace(",", " "))
 
-            # Wykres kołowy
+            # Wykres udziałów (poziome słupki)
             try:
-                import altair as alt
-                df_pie_b = df_bulk.dropna(subset=["Udział (%)"]).copy()
-                if not df_pie_b.empty:
-                    chart_pie_b = (
-                        alt.Chart(df_pie_b)
-                        .mark_arc()
-                        .encode(
-                            theta=alt.Theta(field="Gramy", type="quantitative"),
-                            color=alt.Color(field="Produkt", type="nominal",
-                                            legend=alt.Legend(title="Produkt", labelFontSize=16, titleFontSize=18, symbolSize=200)),
-                            tooltip=[
-                                alt.Tooltip("Produkt:N"),
-                                alt.Tooltip("Gramy:Q", format=",.0f"),
-                                alt.Tooltip("Udział (%):Q", format=".1f"),
-                            ],
-                        )
-                        .properties(width=380, height=360)
-                    )
-                    st.altair_chart(chart_pie_b, use_container_width=True)
+                _ch_b = share_bar_chart(df_bulk, "Produkt", "Gramy")
+                if _ch_b is not None:
+                    st.altair_chart(_ch_b, use_container_width=True)
             except Exception:
-                st.caption("Nie udało się wyrenderować wykresu kołowego (Bulk).")
+                st.caption("Nie udało się wyrenderować wykresu udziałów (Bulk).")
