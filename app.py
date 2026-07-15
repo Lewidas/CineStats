@@ -262,6 +262,16 @@ SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "K
 SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
+# --- Chipsy (Lay's / Cheetos) ---
+# Uwaga: dopasowanie DOKŁADNE. W raportach jest ~31 pozycji zawierających "Lay's"/"Cheetos"
+# (paczki 130g, tacki, popcorny smakowe, Sharecorny) — dopasowanie po fragmencie nazwy
+# fałszowałoby wskaźnik. Liczymy wyłącznie pozycje rozszerzenia: "Lay's" i "Cheetos".
+CHIPS_LIST = ["Lay's", "Cheetos"]
+CHIPS_NORM = set(_norm_key(x) for x in CHIPS_LIST)
+# Chipsy sprzedawane są tylko jako rozszerzenie do kubków 5,2l i 6,5l — tylko one w mianowniku.
+CHIPS_DEN_LIST = ["KubekPopcorn5,2l", "KubekPopcorn6,5l"]
+CHIPS_DEN_NORM = set(_norm_key(x) for x in CHIPS_DEN_LIST)
+
 
 # Zestawy (do KPI "% Zestawy")
 SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+", "DuetShare+"]
@@ -366,6 +376,8 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     m_sden  = d["__pnorm"].isin(SHARE_DEN_NORM)
     m_sets  = d["__pnorm"].isin(SETS_NORM)
     m_serowe = d["__pnorm"] == "nachosserowe"
+    m_chips = d["__pnorm"].isin(CHIPS_NORM)
+    m_chips_den = d["__pnorm"].isin(CHIPS_DEN_NORM)
 
     def _sum_by_user(mask):
         return d.loc[mask].groupby("UserFullName")["__q"].sum().reindex(users, fill_value=0)
@@ -375,6 +387,8 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     snum   = _sum_by_user(m_snum);  sden = _sum_by_user(m_sden)
     sets_u = _sum_by_user(m_sets)
     serowe = _sum_by_user(m_serowe)
+    chips  = _sum_by_user(m_chips)
+    chips_den = _sum_by_user(m_chips_den)
 
     # Liczba transakcji na osobę (ramka jest już bez CAF/VIP)
     if "TransactionId" in d.columns:
@@ -389,6 +403,8 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     pct_sets      = (sets_u / txc_f.replace(0, pd.NA) * 100).astype("Float64")
     # % Nachos Serowe – ten sam mianownik co % Extra Sos (tacki nachos: średnia + duża)
     pct_nachos_serowe = (serowe / base.replace(0, pd.NA) * 100).astype("Float64")
+    # % Chipsy – Lay's + Cheetos / opakowania popcorn 5,2l + 6,5l
+    pct_chipsy = (chips / chips_den.replace(0, pd.NA) * 100).astype("Float64")
 
     # Średnia wartość transakcji na osobę (dedup NetAmount na poziomie transakcji)
     if {"TransactionId", "NetAmount"}.issubset(d.columns):
@@ -407,6 +423,7 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
         "pct_sharecorn": pct_sharecorn,
         "pct_sets": pct_sets,
         "pct_nachos_serowe": pct_nachos_serowe,
+        "pct_chipsy": pct_chipsy,
     }, index=users)
 
     # Agregaty kina (nieokrąglone – zaokrąglenie po stronie widoków, jak wcześniej)
@@ -421,6 +438,7 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
         "pct_sharecorn": _ratio(float(d.loc[m_snum, "__q"].sum()),  float(d.loc[m_sden, "__q"].sum())),
         "pct_sets":      _ratio(float(d.loc[m_sets, "__q"].sum()),  tx_total),
         "pct_nachos_serowe": _ratio(float(d.loc[m_serowe, "__q"].sum()), float(d.loc[m_base, "__q"].sum())),
+        "pct_chipsy": _ratio(float(d.loc[m_chips, "__q"].sum()), float(d.loc[m_chips_den, "__q"].sum())),
     }
     if {"TransactionId", "NetAmount"}.issubset(d.columns) and tx_total:
         grp_all = d.groupby("TransactionId")["NetAmount"]
@@ -459,6 +477,7 @@ with tab_pivot:
             5) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
             6) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje barowe *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
             7) **% Nachos Serowe** – Suma sprzedanych nachos serowych / sprzedane tacki nachos  
+            8) **% Chipsy** – Suma sprzedanych Lay's i Cheetos / sprzedane popcorny 5,2 i 6,5  
             """
         )
 
@@ -482,11 +501,12 @@ with tab_pivot:
         result["% ShareCorn"] = pu["pct_sharecorn"].round(1)
         result["% Zestawy"] = pu["pct_sets"].round(1)
         result["% Nachos Serowe"] = pu["pct_nachos_serowe"].round(1)
+        result["% Chipsy"] = pu["pct_chipsy"].round(1)
     else:
-        for c in ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe"]:
+        for c in ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe", "% Chipsy"]:
             result[c] = pd.Series(dtype="Float64")
 
-    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe"]
+    order = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe", "% Chipsy"]
     result = result[order]
     result_sorted = result.sort_values(by="Średnia wartość transakcji", ascending=False, na_position="last")
 
@@ -500,6 +520,7 @@ with tab_pivot:
             "% ShareCorn": [None if cin.get("pct_sharecorn") is None else round(cin["pct_sharecorn"], 1)],
             "% Zestawy": [None if cin.get("pct_sets") is None else round(cin["pct_sets"], 1)],
             "% Nachos Serowe": [None if cin.get("pct_nachos_serowe") is None else round(cin["pct_nachos_serowe"], 1)],
+            "% Chipsy": [None if cin.get("pct_chipsy") is None else round(cin["pct_chipsy"], 1)],
         }, index=["Średnia kina"])
         final_df = pd.concat([summary_row, result_sorted], axis=0)
     except Exception:
@@ -516,6 +537,7 @@ with tab_pivot:
     styled = final_df.style.format({
         "% Extra Sos": _fmt_pct, "% Popcorny smakowe": _fmt_pct, "% ShareCorn": _fmt_pct, "% Zestawy": _fmt_pct,
         "% Nachos Serowe": _fmt_pct,
+        "% Chipsy": _fmt_pct,
         "Średnia wartość transakcji": _fmt_pln
     }).apply(_bold_and_shade, axis=1)
     st.dataframe(styled, use_container_width=True)
@@ -530,7 +552,7 @@ with tab_pivot:
             fmt_pct = wb.add_format({"num_format": "0.0 %"})
             fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
             fmt_int = wb.add_format({"num_format": "0"})
-            col_names = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe"]
+            col_names = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe", "% Chipsy"]
             for j, name in enumerate(col_names, start=1):
                 width = 22 if name != "Liczba transakcji" else 18
                 if name == "Liczba transakcji":
@@ -598,6 +620,7 @@ with tab_indy:
     pct_sharecorn_cinema = cin.get("pct_sharecorn")
     pct_sets_cinema      = cin.get("pct_sets")
     pct_nachos_serowe_cinema = cin.get("pct_nachos_serowe")
+    pct_chipsy_cinema = cin.get("pct_chipsy")
     avg_tr_cinema        = cin.get("avg_tx")
 
     # OSOBA – wartości z tabeli per-osoba (bez maskowania podzbioru danych)
@@ -611,10 +634,11 @@ with tab_indy:
         pct_sharecorn_u = _val("pct_sharecorn")
         pct_sets_u      = _val("pct_sets")
         pct_nachos_serowe_u = _val("pct_nachos_serowe")
+        pct_chipsy_u = _val("pct_chipsy")
         avg_tr_u        = _val("avg_tx")
         tx_count_u      = 0 if pd.isna(_row.get("tx_count")) else int(_row.get("tx_count"))
     else:
-        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = pct_sets_u = pct_nachos_serowe_u = avg_tr_u = None
+        pct_extra_u = pct_popcorny_u = pct_sharecorn_u = pct_sets_u = pct_nachos_serowe_u = pct_chipsy_u = avg_tr_u = None
         tx_count_u = 0
 
     def _fmt_pct(x): return "" if x is None else f"{x:.1f} %"
@@ -656,7 +680,7 @@ with tab_indy:
     has_bar  = (avg_tr_bar_u is not None)
     has_cafe = (avg_tr_cafe_u is not None)
     has_vip  = (avg_tr_vip_u is not None)
-    has_pct  = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_nachos_serowe_u])
+    has_pct  = any(v is not None for v in [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_nachos_serowe_u, pct_chipsy_u])
 
     rows = [
         ["Średnia wartość transakcji bar",  avg_tr_bar_u,  avg_tr_bar_cinema,  _fmt_diff_pln(avg_tr_bar_u,  avg_tr_bar_cinema)],
@@ -667,6 +691,7 @@ with tab_indy:
         ["% ShareCorn",           pct_sharecorn_u,  pct_sharecorn_cinema,  _fmt_diff_pp(pct_sharecorn_u,  pct_sharecorn_cinema)],
         ["% Zestawy",             pct_sets_u,       pct_sets_cinema,       _fmt_diff_pp(pct_sets_u,       pct_sets_cinema)],
         ["% Nachos Serowe",       pct_nachos_serowe_u, pct_nachos_serowe_cinema, _fmt_diff_pp(pct_nachos_serowe_u, pct_nachos_serowe_cinema)],
+        ["% Chipsy",              pct_chipsy_u,     pct_chipsy_cinema,     _fmt_diff_pp(pct_chipsy_u,     pct_chipsy_cinema)],
     ]
     df_view = pd.DataFrame(rows, columns=["Wskaźnik", sel_user, "Średnia kina", "Δ vs kino"])
 
@@ -793,9 +818,9 @@ with tab_indy:
     # Wskaźniki procentowe (facet: Extra Sos / Popcorny / ShareCorn)
     if has_pct:
         st.caption("Wskaźniki procentowe")
-        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Nachos Serowe"]
-        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_nachos_serowe_u]
-        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema, pct_nachos_serowe_cinema]
+        metrics = ["% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Nachos Serowe", "% Chipsy"]
+        user_vals = [pct_extra_u, pct_popcorny_u, pct_sharecorn_u, pct_nachos_serowe_u, pct_chipsy_u]
+        cinema_vals = [pct_extra_cinema, pct_popcorny_cinema, pct_sharecorn_cinema, pct_nachos_serowe_cinema, pct_chipsy_cinema]
         rows = []
         for mname, u, c in zip(metrics, user_vals, cinema_vals):
             if u is None:
@@ -1001,6 +1026,13 @@ with tab_best:
     avg_serowe = cin.get("pct_nachos_serowe")
     if avg_serowe is not None: st.caption(f"Średnia kina: **{avg_serowe:.1f} %**")
     st.dataframe(style_over_avg(df_serowe, avg_serowe, is_pct=True), use_container_width=True, hide_index=True)
+
+    # % Chipsy
+    st.markdown("#### % Chipsy")
+    df_chipsy = _rank_table(pu["pct_chipsy"] if not pu.empty else empty_series)
+    avg_chipsy = cin.get("pct_chipsy")
+    if avg_chipsy is not None: st.caption(f"Średnia kina: **{avg_chipsy:.1f} %**")
+    st.dataframe(style_over_avg(df_chipsy, avg_chipsy, is_pct=True), use_container_width=True, hide_index=True)
 
     # Średnia wartość transakcji
     st.markdown("#### Średnia wartość transakcji")
