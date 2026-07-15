@@ -256,7 +256,9 @@ FLAVORED_NORM = set(_norm_key(x) for x in FLAVORED_LIST)
 BASE_POP_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l", "KubekPopcorn6,5l"]
 BASE_POP_NORM = set(_norm_key(x) for x in BASE_POP_LIST)
 SHARE_NUM_LIST = ["KubekPopcorn6,5l"]
-SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l"]
+# Mianownik % ShareCorn = wszystkie opakowania popcorn (5 kubków, łącznie z 6,5l),
+# spójnie z mianownikiem "% Popcorny smakowe" (BASE_POP_LIST).
+SHARE_DEN_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l", "KubekPopcorn6,5l"]
 SHARE_NUM_NORM = set(_norm_key(x) for x in SHARE_NUM_LIST)
 SHARE_DEN_NORM = set(_norm_key(x) for x in SHARE_DEN_LIST)
 
