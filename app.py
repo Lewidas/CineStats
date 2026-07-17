@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import math
 import zipfile
 import shutil
 import tempfile
@@ -291,7 +292,7 @@ tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props 
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
-    st.subheader("🗂️ Ustawienia źródła danych")
+    st.subheader("Ustawienia źródła danych")
     data_mode = st.radio("Źródło danych", ["Wgrywanie plików", "Folder lokalny"], horizontal=True, index=0)
 
     if data_mode == "Wgrywanie plików":
@@ -487,7 +488,7 @@ def share_bar_chart(df_in: pd.DataFrame, cat_col: str, val_col: str,
 
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
-    st.subheader("📈 Tabela wskaźników")
+    st.subheader("Tabela wskaźników")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -602,7 +603,7 @@ with tab_pivot:
     except Exception as ex:
         st.warning(f"Nie udało się przygotować XLSX: {ex}")
 
-    with st.expander("🎯 Szybkie zapytanie: zleceniobiorca + produkt", expanded=False):
+    with st.expander("Szybkie zapytanie: zleceniobiorca + produkt", expanded=False):
         users = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
         prods = sorted(dff.get("ProductName", pd.Series(dtype=str)).dropna().unique())
         left, right = st.columns(2)
@@ -618,7 +619,7 @@ with tab_pivot:
 
 # ---------- Zakładka: Wyniki indywidualne ----------
 with tab_indy:
-    st.subheader("👤 Wyniki indywidualne")
+    st.subheader("Wyniki indywidualne")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -734,7 +735,7 @@ with tab_indy:
     df_view = df_view[df_view[sel_user].notna()].copy()
 
     st.markdown("#### Zestawienie")
-    # Trzy metryki: bar / cafe / vip
+
     def _count_tx(frame, user):
         if "TransactionId" not in frame.columns: return None
         sub = frame[frame.get("UserFullName","") == user]
@@ -742,12 +743,36 @@ with tab_indy:
     tx_bar  = _count_tx(bar_df,  sel_user)
     tx_cafe = _count_tx(cafe_df, sel_user)
     tx_vip  = _count_tx(vip_df,  sel_user)
-    c1,c2,c3 = st.columns(3)
+
     def _fmt_int(x):
-        return "-" if (x is None) else f"{x:,}".replace(",", " ")
-    c1.metric("Liczba transakcji — bar (bez CAF/VIP)", _fmt_int(tx_bar))
-    c2.metric("Liczba transakcji — cafe (CAF)", _fmt_int(tx_cafe))
-    c3.metric("Liczba transakcji — VIP", _fmt_int(tx_vip))
+        return "—" if (x is None) else f"{x:,}".replace(",", " ")
+
+    def _metric_delta_pln(u, c):
+        """Delta dla st.metric. UWAGA: ASCII '-', bo Streamlit z tego znaku odczytuje
+        kierunek strzałki. Znak '−' (U+2212) używany w tabeli dałby tu zieloną
+        strzałkę w górę przy spadku."""
+        if (u is None) or (c is None):
+            return None
+        d = float(u) - float(c)
+        return ("+" if d >= 0 else "-") + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
+
+    # Segmenty bar / cafe / VIP: liczba transakcji + średnia wartość z różnicą do kina.
+    # st.metric(delta=...) zastępuje trzy dwusłupkowe wykresy — te same dane, ułamek miejsca.
+    _seg = [
+        ("bar (bez CAF/VIP)", tx_bar,  avg_tr_bar_u,  avg_tr_bar_cinema),
+        ("cafe (CAF)",        tx_cafe, avg_tr_cafe_u, avg_tr_cafe_cinema),
+        ("VIP",               tx_vip,  avg_tr_vip_u,  avg_tr_vip_cinema),
+    ]
+    _cols_seg = st.columns(3)
+    for _col_seg, (_seg_name, _seg_tx, _seg_u, _seg_c) in zip(_cols_seg, _seg):
+        with _col_seg:
+            st.metric(f"Transakcje — {_seg_name}", _fmt_int(_seg_tx))
+            st.metric(
+                f"Śr. wartość — {_seg_name}",
+                _fmt_pln(_seg_u) if _seg_u is not None else "—",
+                delta=_metric_delta_pln(_seg_u, _seg_c),
+                help="Średnia kina: " + (_fmt_pln(_seg_c) if _seg_c is not None else "—"),
+            )
 
     # Formatowanie tabeli: PLN dla wierszy "Średnia wartość transakcji", % dla reszty.
     # Budujemy całe kolumny stringów naraz (zamiast wstawiać stringi do kolumn float
@@ -792,63 +817,9 @@ with tab_indy:
     except Exception:
         st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    # Wykresy
-    st.markdown("### 📊 Wykresy porównawcze")
+    # Wykres porównawczy (średnie wartości transakcji pokazują karty w "Zestawienie" powyżej)
+    st.markdown("### Porównanie ze średnią kina")
     _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
-
-    def _money_df(orig_user, orig_kino):
-        _u = 0.0 if orig_user is None else float(orig_user)
-        _k = 0.0 if orig_kino is None else float(orig_kino)
-        _col = _gray
-        if (orig_user is not None) and (orig_kino is not None):
-            _col = _green if orig_user >= orig_kino else _red
-        _lab = ""
-        if (orig_user is not None) and (orig_kino is not None):
-            d = orig_user - orig_kino
-            s = "+" if d >= 0 else "−"
-            _lab = s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
-        return pd.DataFrame([
-            {"Kto": sel_user, "Wartość": _u, "kolor": _col, "label": _lab, "label_color": _col},
-            {"Kto": "Średnia kina", "Wartość": _k, "kolor": _gray, "label": "", "label_color": _gray},
-        ])
-
-    def _money_chart(df_local):
-        base = alt.Chart(df_local)
-        bars = base.mark_bar(size=28).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q", title="zł"),
-            color=alt.Color("kolor:N", legend=None, scale=None),
-            tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wartość:Q", format=",.2f")]
-        )
-        labels = base.mark_text(dy=-6, size=16).encode(
-            x=alt.X("Kto:N", sort=[sel_user, "Średnia kina"], title=""),
-            y=alt.Y("Wartość:Q"),
-            text=alt.Text("label:N"),
-            color=alt.Color("label_color:N", legend=None, scale=None)
-        )
-        ref = alt.Chart(pd.DataFrame({"ref":[float(df_local.loc[df_local['Kto']=='Średnia kina','Wartość'].iloc[0])] })).mark_rule(
-            strokeDash=[6,4], color=_gray, opacity=0.8
-        ).encode(y="ref:Q")
-        return (bars + labels + ref).properties(width=360, height=320)
-
-    # Renderuj tylko wykresy z danymi użytkownika
-    charts = []
-    if has_bar:
-        charts.append(("Średnia wartość transakcji — bar", avg_tr_u, avg_tr_cinema))
-    if has_cafe:
-        charts.append(("Średnia wartość transakcji — cafe", avg_tr_cafe_u, avg_tr_cafe_cinema))
-    if has_vip:
-        charts.append(("Średnia wartość transakcji — VIP", avg_tr_vip_u, avg_tr_vip_cinema))
-
-    if charts:
-        cols = st.columns(len(charts))
-        for col, (title, uval, cval) in zip(cols, charts):
-            with col:
-                st.markdown(f"#### {title}")
-                df_local = _money_df(uval, cval)
-                st.altair_chart(_money_chart(df_local), use_container_width=False)
-    else:
-        st.info("Brak danych do wykresów średniej wartości transakcji dla wybranej osoby.")
 
     # Wskaźniki procentowe — JEDEN wykres porównawczy (dumbbell) zamiast osobnych wykresów.
     # Każdy wiersz: szara kropka = średnia kina, kolorowa kropka = osoba, linia = luka.
@@ -879,9 +850,13 @@ with tab_indy:
         if rows_db:
             df_db = pd.DataFrame(rows_db)
             order_y = df_db["Wskaźnik"].tolist()
-            _vmax = float(max(100.0, float(df_db[["Osoba", "Kino"]].to_numpy().max())))
-            _x_scale = alt.Scale(domain=[0, _vmax * 1.14], nice=False)  # zapas na etykiety różnic
-            _x_axis = alt.Axis(title="%", values=[0, 25, 50, 75, 100]) if _vmax <= 100.0 else alt.Axis(title="%")
+            # Skala zawsze od 0, ale góra dopasowana do danych (zaokrąglona w górę do 10),
+            # z zapasem na kolumnę etykiet po prawej. Sztywne 0–100 marnowało 2/3 szerokości.
+            _dmax = float(df_db[["Osoba", "Kino"]].to_numpy().max())
+            _top = max(30.0, math.ceil(_dmax * 1.30 / 10.0) * 10.0)
+            df_db["__lab_x"] = _top
+            _x_scale = alt.Scale(domain=[0, _top], nice=False)
+            _x_axis = alt.Axis(title="%", tickCount=5, labelFontSize=11)
             _y = alt.Y("Wskaźnik:N", sort=order_y, title=None, axis=alt.Axis(labelFontSize=13, labelLimit=180))
             base_db = alt.Chart(df_db)
             conn_db = base_db.mark_rule(strokeWidth=3, opacity=0.35).encode(
@@ -901,22 +876,26 @@ with tab_indy:
                 color=alt.Color("kolor:N", legend=None, scale=None),
                 tooltip=[alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Osoba:Q", format=".1f", title=str(sel_user))],
             )
-            lab_db = base_db.mark_text(align="left", dx=12, fontSize=12).encode(
+            # Etykiety w stałej kolumnie przy prawej krawędzi — przy kropce nachodziłyby
+            # na linię łączącą zawsze, gdy osoba jest poniżej średniej.
+            lab_db = base_db.mark_text(align="right", fontSize=12, dx=-2).encode(
                 y=_y,
-                x=alt.X("Osoba:Q", scale=_x_scale, axis=_x_axis),
+                x=alt.X("__lab_x:Q", scale=_x_scale, axis=_x_axis),
                 text=alt.Text("diff_label:N"),
                 color=alt.Color("kolor:N", legend=None, scale=None),
             )
             st.altair_chart(
-                (conn_db + dot_kino + dot_user + lab_db).properties(height=max(200, 46 * len(df_db))),
-                use_container_width=True,
+                (conn_db + dot_kino + dot_user + lab_db).properties(
+                    width=660, height=max(190, 44 * len(df_db))
+                ),
+                use_container_width=False,
             )
             st.caption("Szara kropka = średnia kina · kolorowa kropka = wybrany zleceniobiorca · etykieta = różnica w p.p.")
     else:
         st.info("Brak danych do wykresów wskaźników procentowych dla wybranej osoby.")
 
     # --- Struktura sprzedaży — zestawy (osoba) ---
-    st.markdown("### 🧩 Struktura sprzedaży — zestawy (osoba)")
+    st.markdown("### Struktura sprzedaży — zestawy (osoba)")
     try:
         dff_u_sets = dff[dff["UserFullName"] == sel_user].copy()
         if dff_u_sets.empty:
@@ -963,7 +942,7 @@ with tab_indy:
 
 # ---------- Zakładka: Najlepsi ----------
 with tab_best:
-    st.subheader("🏆 Najlepsi — ranking wg wskaźników")
+    st.subheader("Najlepsi — ranking wg wskaźników")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -1025,57 +1004,37 @@ with tab_best:
             },
         )
 
-    # % Extra Sos
-    st.markdown("#### % Extra Sos")
-    avg_extra = cin.get("pct_extra")
-    df_extra = _rank_table(pu["pct_extra"] if not pu.empty else empty_series, avg_extra)
-    if avg_extra is not None: st.caption(f"Średnia kina: **{avg_extra:.1f} %**")
-    _show_rank(df_extra, is_pct=True)
+    # Jeden ranking na raz — wybór wskaźnika zamiast sześciu tabel jedna pod drugą.
+    _best_options = [
+        ("% Extra Sos",                 "pct_extra",         True),
+        ("% Popcorny smakowe",          "pct_popcorny",      True),
+        ("% ShareCorn",                 "pct_sharecorn",     True),
+        ("% Nachos Serowe",             "pct_nachos_serowe", True),
+        ("% Chipsy",                    "pct_chipsy",        True),
+        ("Średnia wartość transakcji",  "avg_tx",            False),
+    ]
+    _best_labels = [o[0] for o in _best_options]
+    _best_sel = st.selectbox("Wskaźnik", options=_best_labels, index=0, key="best_metric")
+    _b_label, _b_key, _b_is_pct = next(o for o in _best_options if o[0] == _best_sel)
 
-    # % Popcorny smakowe
-    st.markdown("#### % Popcorny smakowe")
-    avg_pop = cin.get("pct_popcorny")
-    df_pop = _rank_table(pu["pct_popcorny"] if not pu.empty else empty_series, avg_pop)
-    if avg_pop is not None: st.caption(f"Średnia kina: **{avg_pop:.1f} %**")
-    _show_rank(df_pop, is_pct=True)
-
-    # % ShareCorn
-    st.markdown("#### % ShareCorn")
-    avg_share = cin.get("pct_sharecorn")
-    df_share = _rank_table(pu["pct_sharecorn"] if not pu.empty else empty_series, avg_share)
-    if avg_share is not None: st.caption(f"Średnia kina: **{avg_share:.1f} %**")
-    _show_rank(df_share, is_pct=True)
-
-    # % Nachos Serowe
-    st.markdown("#### % Nachos Serowe")
-    avg_serowe = cin.get("pct_nachos_serowe")
-    df_serowe = _rank_table(pu["pct_nachos_serowe"] if not pu.empty else empty_series, avg_serowe)
-    if avg_serowe is not None: st.caption(f"Średnia kina: **{avg_serowe:.1f} %**")
-    _show_rank(df_serowe, is_pct=True)
-
-    # % Chipsy
-    st.markdown("#### % Chipsy")
-    avg_chipsy = cin.get("pct_chipsy")
-    df_chipsy = _rank_table(pu["pct_chipsy"] if not pu.empty else empty_series, avg_chipsy)
-    if avg_chipsy is not None: st.caption(f"Średnia kina: **{avg_chipsy:.1f} %**")
-    _show_rank(df_chipsy, is_pct=True)
-
-    # Średnia wartość transakcji
-    st.markdown("#### Średnia wartość transakcji")
-    if {"TransactionId", "NetAmount"}.issubset(dff.columns):
-        avg_global = cin.get("avg_tx")
-        df_avg = _rank_table(pu["avg_tx"] if not pu.empty else empty_series, avg_global)
-        if avg_global is not None:
-            st.caption(f"Średnia kina: **{avg_global:,.2f} zł**".replace(",", " ").replace(".", ","))
-        _show_rank(df_avg, is_pct=False)
-    else:
+    if (_b_key == "avg_tx") and not {"TransactionId", "NetAmount"}.issubset(dff.columns):
         st.info("Brak kolumn TransactionId lub NetAmount — nie można policzyć średniej wartości transakcji.")
+    else:
+        st.markdown(f"#### {_b_label}")
+        _b_avg = cin.get(_b_key)
+        _b_tbl = _rank_table(pu[_b_key] if not pu.empty else empty_series, _b_avg)
+        if _b_avg is not None:
+            if _b_is_pct:
+                st.caption(f"Średnia kina: **{_b_avg:.1f} %**")
+            else:
+                st.caption(f"Średnia kina: **{_b_avg:,.2f} zł**".replace(",", " ").replace(".", ","))
+        _show_rank(_b_tbl, is_pct=_b_is_pct)
 
 
 
 # ---------- Zakładka: Kreator Konkursów ----------
 with tab_comp:
-    st.subheader("🧮 Kreator Konkursów")
+    st.subheader("Kreator Konkursów")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 
@@ -1337,7 +1296,7 @@ with tab_comp:
 
 # ---------- Zakładka: Cafe Stats ----------
 with tab_cafe:
-    st.subheader("☕ Cafe Stats — wszystkie kina (CAF)")
+    st.subheader("Cafe Stats — wszystkie kina (CAF)")
     df = ensure_data_or_stop()
     df = add__date_column(df)
 

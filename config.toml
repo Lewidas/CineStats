@@ -1,0 +1,24 @@
+# CineStats — motyw aplikacji.
+#
+# WAŻNE: ten plik musi trafić do repo jako  .streamlit/config.toml
+# (czyli katalog ".streamlit" w katalogu głównym, obok app.py i requirements.txt).
+# Streamlit Cloud podchwytuje go automatycznie po redeployu.
+
+[theme]
+# Wymuszamy jasny motyw. Powód praktyczny: tabele używają na stałe jasnych teł
+# (#dcfce7 dla plusa, #fee2e2 dla minusa, #f3f4f6 dla wiersza "Średnia kina").
+# W trybie ciemnym ten tekst byłby nieczytelny — blokada usuwa ten problem.
+base = "light"
+
+# Kolor akcentu = ten sam błękit, którym rysowane są słupki udziałów.
+primaryColor = "#2a78d6"
+
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f4f4f0"
+textColor = "#1c1b1a"
+font = "sans serif"
+
+[server]
+# Raporty miesięczne potrafią mieć kilkanaście MB — domyślne 200 MB w zupełności starcza,
+# ale zostawiam jawnie, żeby limit był widoczny w jednym miejscu.
+maxUploadSize = 200
