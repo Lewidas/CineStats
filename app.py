@@ -252,7 +252,7 @@ def _norm_key(x):
     return s
 
 # ---------- Wspólne maski/produkty ----------
-FLAVORED_LIST = ["BEKON-SER", "BEKON-SER/SOL", "CHEDDAR/SOL", "KARMEL.", "KARMEL/BEKON.", "KARMEL/CHEDDAR.", "KARMEL/SOL.", "SER-CHEDDAR"]
+FLAVORED_LIST = ["BEKON-SER", "BEKON-SER/SOL", "CHEDDAR/SOL", "KARMEL.", "KARMEL/BEKON.", "KARMEL/SOL.", "KARMEL/CHEDDAR.", "SER-CHEDDAR", "BANAN"]
 FLAVORED_NORM = set(_norm_key(x) for x in FLAVORED_LIST)
 BASE_POP_LIST = ["KubekPopcorn1,5l", "KubekPopcorn2,3l", "KubekPopcorn4,2l", "KubekPopcorn5,2l", "KubekPopcorn6,5l"]
 BASE_POP_NORM = set(_norm_key(x) for x in BASE_POP_LIST)
@@ -275,7 +275,7 @@ CHIPS_DEN_NORM = set(_norm_key(x) for x in CHIPS_DEN_LIST)
 
 
 # Zestawy (do KPI "% Zestawy")
-SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "MAXI+", "Szkolny+", "DuetShare+"]
+SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "Szkolny+", "DuetShare+"]
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
 
@@ -901,7 +901,7 @@ with tab_indy:
         if dff_u_sets.empty:
             st.info("Brak danych o zestawach dla wybranego zleceniobiorcy w wybranym okresie.")
         else:
-            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
+            SETS_LIST_LOCAL = SETS_LIST  # jedno źródło prawdy — bez lokalnej kopii listy
             if "__pnorm" not in dff_u_sets.columns:
                 dff_u_sets["__pnorm"] = dff_u_sets["ProductName"].map(_norm_key)
             pn  = dff_u_sets["__pnorm"]
@@ -1505,27 +1505,17 @@ with tab_props:
         if dff.empty:
             st.info("Brak danych w wybranym zakresie dat.")
         else:
-            # Lista zestawów (wraz z DuetShare+)
-            SETS_LIST_LOCAL = ["XLOffer+","Sredni+","Duzy+","Family1+1","Duet+","MAXI+","Szkolny+","DuetShare+"]
-
-            # Użyj znormalizowanej nazwy produktu jeśli dostępna
-            if "__pnorm" in dff.columns:
-                pn = dff["__pnorm"]
-                if "SETS_NORM" in globals():
-                    set_keys = list(SETS_NORM) if isinstance(SETS_NORM, (list, tuple, set)) else [str(SETS_NORM)]
-                else:
-                    set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
-            else:
-                pn = dff["ProductName"].astype(str).str.upper().str.strip()
-                set_keys = [str(x).upper().strip() for x in SETS_LIST_LOCAL]
-
+            # Jedno źródło prawdy: globalna SETS_LIST. Dopasowanie przez _norm_key,
+            # spójnie z resztą aplikacji (wcześniej suma liczyła się z kluczy
+            # znormalizowanych, a poszczególne wiersze z UPPER — przy obecności
+            # kolumny __pnorm dawało to zera w wierszach mimo niezerowej sumy).
+            pn  = dff["ProductName"].map(_norm_key)
             qty = pd.to_numeric(dff.get("Quantity"), errors="coerce").fillna(0)
-            total_sets = float(qty[pn.isin(set_keys)].sum())
+            total_sets = float(qty[pn.isin(SETS_NORM)].sum())
 
             rows = []
-            for name in SETS_LIST_LOCAL:
-                key = str(name).upper().strip()
-                cnt = float(qty[pn == key].sum())
+            for name in SETS_LIST:
+                cnt = float(qty[pn == _norm_key(name)].sum())
                 share = (cnt/total_sets*100) if total_sets else None
                 rows.append({"Zestaw": name, "Sztuki": cnt, "Udział (%)": (None if share is None else round(share, 1))})
 
