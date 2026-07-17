@@ -278,6 +278,17 @@ CHIPS_DEN_NORM = set(_norm_key(x) for x in CHIPS_DEN_LIST)
 SETS_LIST = ["XLOffer+", "Sredni+", "Duzy+", "Family1+1", "Duet+", "Szkolny+", "DuetShare+"]
 SETS_NORM = set(_norm_key(x) for x in SETS_LIST)
 
+# Tacki nachos — baza dla % Extra Sos i % Nachos Serowe.
+NACHOS_BASE_LIST = ["TackaNachosSrednia", "TackaNachosDuza"]
+NACHOS_BASE_NORM = set(_norm_key(x) for x in NACHOS_BASE_LIST)
+
+# Mianownik % Zestawy = wszystkie opakowania popcorn + tacki nachos.
+# Wcześniej dzieliliśmy przez liczbę transakcji barowych, co wprowadzało szum:
+# transakcja typu "jeden baton za 5 zł" nigdy nie mogła skończyć się zestawem,
+# a i tak powiększała mianownik.
+SETS_DEN_LIST = BASE_POP_LIST + NACHOS_BASE_LIST
+SETS_DEN_NORM = set(_norm_key(x) for x in SETS_DEN_LIST)
+
 
 # --- BULK (mapa nazw i znormalizowane klucze) ---
 BULK_LABELS = {
@@ -370,12 +381,13 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     users = sorted(d["UserFullName"].dropna().unique())
 
     m_extra = d["__pnorm"] == "extranachossauce"
-    m_base  = d["__pnorm"].isin({"tackanachossrednia", "tackanachosduza"})
+    m_base  = d["__pnorm"].isin(NACHOS_BASE_NORM)
     m_flav  = d["__pnorm"].isin(FLAVORED_NORM)
     m_bpop  = d["__pnorm"].isin(BASE_POP_NORM)
     m_snum  = d["__pnorm"].isin(SHARE_NUM_NORM)
     m_sden  = d["__pnorm"].isin(SHARE_DEN_NORM)
     m_sets  = d["__pnorm"].isin(SETS_NORM)
+    m_sets_den = d["__pnorm"].isin(SETS_DEN_NORM)
     m_serowe = d["__pnorm"] == "nachosserowe"
     m_chips = d["__pnorm"].isin(CHIPS_NORM)
     m_chips_den = d["__pnorm"].isin(CHIPS_DEN_NORM)
@@ -387,6 +399,7 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     flav   = _sum_by_user(m_flav);  bpop = _sum_by_user(m_bpop)
     snum   = _sum_by_user(m_snum);  sden = _sum_by_user(m_sden)
     sets_u = _sum_by_user(m_sets)
+    sets_den = _sum_by_user(m_sets_den)
     serowe = _sum_by_user(m_serowe)
     chips  = _sum_by_user(m_chips)
     chips_den = _sum_by_user(m_chips_den)
@@ -401,7 +414,7 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     pct_extra     = (extra / base.replace(0, pd.NA) * 100).astype("Float64")
     pct_popcorny  = (flav / bpop.replace(0, pd.NA) * 100).astype("Float64")
     pct_sharecorn = (snum / sden.replace(0, pd.NA) * 100).astype("Float64")
-    pct_sets      = (sets_u / txc_f.replace(0, pd.NA) * 100).astype("Float64")
+    pct_sets      = (sets_u / sets_den.replace(0, pd.NA) * 100).astype("Float64")
     # % Nachos Serowe – ten sam mianownik co % Extra Sos (tacki nachos: średnia + duża)
     pct_nachos_serowe = (serowe / base.replace(0, pd.NA) * 100).astype("Float64")
     # % Chipsy – Lay's + Cheetos / opakowania popcorn 5,2l + 6,5l
@@ -437,7 +450,7 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
         "pct_extra":     _ratio(float(d.loc[m_extra, "__q"].sum()), float(d.loc[m_base, "__q"].sum())),
         "pct_popcorny":  _ratio(float(d.loc[m_flav, "__q"].sum()),  float(d.loc[m_bpop, "__q"].sum())),
         "pct_sharecorn": _ratio(float(d.loc[m_snum, "__q"].sum()),  float(d.loc[m_sden, "__q"].sum())),
-        "pct_sets":      _ratio(float(d.loc[m_sets, "__q"].sum()),  tx_total),
+        "pct_sets":      _ratio(float(d.loc[m_sets, "__q"].sum()),  float(d.loc[m_sets_den, "__q"].sum())),
         "pct_nachos_serowe": _ratio(float(d.loc[m_serowe, "__q"].sum()), float(d.loc[m_base, "__q"].sum())),
         "pct_chipsy": _ratio(float(d.loc[m_chips, "__q"].sum()), float(d.loc[m_chips_den, "__q"].sum())),
     }
@@ -511,7 +524,7 @@ with tab_pivot:
             3) **% Extra Sos** – Suma sprzedanych extra sosów / sprzedane tacki nachos  
             4) **% Popcorn Smakowy** – Suma sprzedanych popcornów smakowych / sprzedane opakowania popcorn  
             5) **% Share Corn** – Suma sprzedanych popcornów Share / sprzedane opakowania popcorn  
-            6) **% Zestawy** – Suma sprzedanych zestawów / wszystkie transakcje barowe *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
+            6) **% Zestawy** – Suma sprzedanych zestawów / sprzedane opakowania popcorn i tacki nachos *(więcej szczegółów dotyczących zestawów w podstronie „Proporcje Sprzedaży”)*  
             7) **% Nachos Serowe** – Suma sprzedanych nachos serowych / sprzedane tacki nachos  
             8) **% Chipsy** – Suma sprzedanych Lay's i Cheetos / sprzedane popcorny 5,2 i 6,5  
             """
