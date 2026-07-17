@@ -1,0 +1,41 @@
+# CineStats — motyw aplikacji (kierunek "redakcyjny").
+#
+# WAŻNE: ten plik musi trafić do repo jako  .streamlit/config.toml
+# (katalog ".streamlit" w katalogu głównym, obok app.py i requirements.txt).
+#
+# Zasada przewodnia: KOLOR JEST DANĄ, NIE DEKORACJĄ.
+# Zielony = powyżej średniej, czerwony = poniżej, złoty = 1. miejsce, szary = punkt
+# odniesienia. Dlatego marka nie zabiera żadnego koloru semantycznego — cały charakter
+# niesie typografia i papierowe tło. Akcent to atrament, nie barwa.
+
+[theme]
+# Jasny motyw wymuszony: tabele mają na stałe jasne tła (#dcfce7 plus, #fee2e2 minus,
+# #f3f4f6 wiersz "Średnia kina") — w trybie ciemnym byłyby nieczytelne.
+base = "light"
+
+# Atrament zamiast koloru akcentu: podkreślenie aktywnej zakładki, przyciski, focus.
+primaryColor = "#1C1B1A"
+
+# Ciepły papier zamiast klinicznej bieli — łagodniejszy przy długiej sesji z tabelami.
+backgroundColor = "#FAF9F5"
+secondaryBackgroundColor = "#F1EFE8"
+textColor = "#1C1B1A"
+
+borderColor = "#E3E0D6"
+dataframeBorderColor = "#E3E0D6"
+dataframeHeaderBackgroundColor = "#F1EFE8"
+linkColor = "#2C4A6E"
+
+# IBM Plex Sans: pełna obsługa polskich znaków (ł ą ę ś ż ź ć ń) i cyfry tabelaryczne.
+# Składnia "Nazwa:URL" ładuje font z Google Fonts — nie trzeba hostować plików.
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
+
+# Nagłówki celowo NIE są szeryfowe — szeryf zarezerwowany wyłącznie dla logotypu.
+headingFont = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
+
+baseRadius = "small"
+buttonRadius = "small"
+showWidgetBorder = true
+
+[server]
+maxUploadSize = 200
