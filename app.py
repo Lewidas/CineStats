@@ -21,7 +21,32 @@ import altair as alt
 # =====================================================================
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
-st.title("🎬 CineStats — sprzedaż i wskaźniki")
+
+# ---------- Logotyp ----------
+# Instrument Serif ładowany własnym @import, a nie przez theme.headingFont — dzięki temu
+# szeryfowy jest WYŁĄCZNIE logotyp, a nagłówki h1–h6 zostają w IBM Plex Sans.
+# Celujemy tylko we własne klasy .cs-*, nie w wewnętrzny DOM Streamlita, więc jego
+# aktualizacje tego nie zepsują. Fallback na Georgia/Times, gdyby Google Fonts nie odpowiedział.
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap');
+    .cs-brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+                margin: 0 0 1.2rem 0; }
+    .cs-brand-name { font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+                     font-size: 2.7rem; line-height: 1.05; letter-spacing: -0.01em;
+                     color: #1C1B1A; }
+    .cs-brand-tag { font-size: 0.9rem; color: #8A8880; }
+    /* Cyfry tabelaryczne: kolumny liczb równają się co do piksela. */
+    body { font-variant-numeric: tabular-nums; }
+    </style>
+    <div class="cs-brand">
+      <span class="cs-brand-name">CineStats</span>
+      <span class="cs-brand-tag">sprzedaż i wskaźniki</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------- Prosta ochrona hasłem (opcjonalna) ----------
 if "PASSWORD" in st.secrets:
@@ -299,7 +324,7 @@ BULK_LABELS = {
 BULK_NORM = set(_norm_key(x) for x in BULK_LABELS.values())
 
 # =============== TABS (podstrony) ===============
-tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["🗂️ Dane", "📈 Tabela przestawna", "👤 Wyniki indywidualne", "🏆 Najlepsi", "🧮 Kreator Konkursów", "☕ Cafe Stats", "👑 VIP stats", "🧩 Proporcje sprzedaży"])
+tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["Dane", "Wskaźniki", "Zleceniobiorca", "Najlepsi", "Konkursy", "Cafe", "VIP", "Proporcje"])
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
@@ -1120,7 +1145,7 @@ with tab_comp:
     if den_mode == "Wybrany produkt":
         den_prod = st.selectbox("Produkt dla mianownika", options=products_all_ext, placeholder="Wybierz produkt...", key="contest_den_prod")
     if den_mode == "Liczba transakcji":
-        st.caption("Liczba unikatowych TransactionId po wykluczeniu POS: Bonarka CAF1/VIP1.")
+        st.caption("Liczba unikatowych TransactionId po wykluczeniu POS typu CAF i VIP.")
     # Minimalna liczba transakcji (próg kwalifikacji)
     min_tx = st.number_input("Minimalna liczba transakcji", min_value=0, value=0, step=1)
 
@@ -1144,10 +1169,9 @@ with tab_comp:
             num = num.add(s, fill_value=0.0)
 
         if den_mode == "Liczba transakcji":
-            tx_df = dff.copy()
-            if "PosName" in tx_df.columns:
-                mask_excl = tx_df["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-                tx_df = tx_df.loc[~mask_excl].copy()
+            # Generycznie (CAF|VIP dowolnego kina), spójnie z pozostałymi zakładkami —
+            # nazwa konkretnego kina nie może być zaszyta w kodzie.
+            tx_df = _exclude_caf_vip(dff)
             if "TransactionId" not in tx_df.columns:
                 st.error("Brak kolumny TransactionId — nie można użyć mianownika 'Liczba transakcji'."); st.stop()
             den = tx_df.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0).astype(float)
@@ -1164,10 +1188,7 @@ with tab_comp:
         res = (num / den.replace(0, pd.NA)).astype("Float64")
         wynik_pct = (res * 100).astype("Float64")
 
-        tx_df_all = dff.copy()
-        if "PosName" in tx_df_all.columns:
-            _m_ex_all = tx_df_all["PosName"].astype(str).str.contains("Bonarka CAF1|Bonarka VIP1", case=False, regex=True, na=False)
-            tx_df_all = tx_df_all.loc[~_m_ex_all].copy()
+        tx_df_all = _exclude_caf_vip(dff)
         tx_count_all = (tx_df_all.groupby("UserFullName")["TransactionId"].nunique().reindex(users_sorted, fill_value=0)
                         if "TransactionId" in tx_df_all.columns else pd.Series([pd.NA]*len(users_sorted), index=users_sorted, dtype="Float64"))
 
