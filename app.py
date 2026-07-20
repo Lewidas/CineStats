@@ -647,7 +647,7 @@ with tab_pivot:
             out_df.to_excel(writer, index=True, sheet_name="Wskaźniki")
             wb = writer.book; ws = writer.sheets["Wskaźniki"]
             fmt_bold = wb.add_format({"bold": True})
-            fmt_pct = wb.add_format({"num_format": "0.0 %"})
+            fmt_pct = wb.add_format({"num_format": '0.0" %"'})
             fmt_pln = wb.add_format({'num_format': '#,##0.00 "zł"'})
             fmt_int = wb.add_format({"num_format": "0"})
             col_names = ["Liczba transakcji", "Średnia wartość transakcji", "% Extra Sos", "% Popcorny smakowe", "% ShareCorn", "% Zestawy", "% Nachos Serowe", "% Chipsy"]
@@ -1270,7 +1270,7 @@ with tab_comp:
             with pd.ExcelWriter(buf_ok, engine="xlsxwriter") as writer:
                 export_ok.to_excel(writer, index=False, sheet_name="Ranking")
                 wb = writer.book; ws = writer.sheets["Ranking"]
-                fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                fmt_pct = wb.add_format({"num_format": '0.0" %"'})
                 fmt_num = wb.add_format({"num_format": "0.00"})
                 fmt_int = wb.add_format({"num_format": "0"})
                 ws.set_column("A:A", 9, fmt_int)
@@ -1301,7 +1301,7 @@ with tab_comp:
                 with pd.ExcelWriter(buf_low, engine="xlsxwriter") as writer:
                     export_low.to_excel(writer, index=False, sheet_name="PonizejProgu")
                     wb = writer.book; ws = writer.sheets["PonizejProgu"]
-                    fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                    fmt_pct = wb.add_format({"num_format": '0.0" %"'})
                     fmt_num = wb.add_format({"num_format": "0.00"})
                     fmt_int = wb.add_format({"num_format": "0"})
                     ws.set_column("A:A", 9, fmt_int)
@@ -1325,7 +1325,7 @@ with tab_comp:
                 export_ok2.to_excel(writer, index=False, sheet_name="Ranking")
                 wb = writer.book
                 # formaty wspólne
-                fmt_pct = wb.add_format({"num_format": "0.0 %"})
+                fmt_pct = wb.add_format({"num_format": '0.0" %"'})
                 fmt_num = wb.add_format({"num_format": "0.00"})
                 fmt_int = wb.add_format({"num_format": "0"})
                 ws1 = writer.sheets["Ranking"]
