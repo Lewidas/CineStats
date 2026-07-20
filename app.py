@@ -1125,7 +1125,9 @@ with tab_comp:
         st.stop()
 
     products_all = sorted(dff.get("ProductName", pd.Series(dtype=str)).dropna().unique())
-    users_sorted = sorted(dff.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
+    # Ranking konkursowy to zestawienie OSÓB — tylko klasa BO, spójnie z zakładką Najlepsi.
+    # (Managerowie/supervisorzy mogą obsługiwać, ale nie startują w rankingu.)
+    users_sorted = sorted(_keep_bo(dff).get("UserFullName", pd.Series(dtype=str)).dropna().unique())
 
     # Grupa: Popcorny Smakowe
     dff["__pnorm"] = dff["ProductName"].map(_norm_key)
@@ -1379,7 +1381,9 @@ with tab_cafe:
     if tx_df.empty:
         st.info("Brak danych dla POS zawierających 'CAF' w wybranym zakresie dat.")
     else:
-        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
+        # Wiersze osób — tylko BO. Średnia segmentu (avg_global poniżej) liczy się z pełnego
+        # tx_df, więc nie-BO obsługujący CAF nadal wpływają na średnią, ale nie są listowani.
+        users_sorted = sorted(_keep_bo(tx_df)["UserFullName"].dropna().unique())
         grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
         nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
         per_tx_total = f.where(nun <= 1, s)
@@ -1475,7 +1479,9 @@ with tab_vip:
     if tx_df.empty:
         st.info("Brak danych dla POS zawierających 'VIP' w wybranym zakresie dat.")
     else:
-        users_sorted = sorted(tx_df["UserFullName"].dropna().unique())
+        # Wiersze osób — tylko BO. Średnia segmentu (avg_global poniżej) liczy się z pełnego
+        # tx_df, więc nie-BO obsługujący VIP nadal wpływają na średnią, ale nie są listowani.
+        users_sorted = sorted(_keep_bo(tx_df)["UserFullName"].dropna().unique())
         grp = tx_df.groupby(["UserFullName", "TransactionId"])["NetAmount"]
         nun = grp.nunique(dropna=True); s = grp.sum(min_count=1); f = grp.first()
         per_tx_total = f.where(nun <= 1, s)
