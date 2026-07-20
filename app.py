@@ -389,6 +389,15 @@ def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
     return df.iloc[0:0].copy()
 
 
+def _keep_bo(df: pd.DataFrame) -> pd.DataFrame:
+    """Zostawia tylko zleceniobiorców klasy 'BO' (kolumna UserClassName).
+    Managerowie i supervisorzy nie mają pojawiać się w zestawieniach osób —
+    ale nadal liczą się do średniej kina (to realizuje compute_bar_metrics)."""
+    if "UserClassName" in df.columns:
+        return df.loc[df["UserClassName"].astype(str).str.strip().eq("BO")].copy()
+    return df.copy()
+
+
 # =============== WSPÓLNE OBLICZENIA WSKAŹNIKÓW (bar) ===============
 # Jedno źródło prawdy dla KPI barowych używanych w zakładkach
 # "Tabela przestawna", "Wyniki indywidualne" i "Najlepsi".
@@ -403,7 +412,20 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     d = dff.copy()
     d["__pnorm"] = d["ProductName"].map(_norm_key) if "ProductName" in d.columns else ""
     d["__q"] = pd.to_numeric(d.get("Quantity"), errors="coerce").fillna(0)
-    users = sorted(d["UserFullName"].dropna().unique())
+
+    # Rozdział dwóch populacji:
+    #  • per_user (tabela wskaźników / ranking / wyniki osoby) — TYLKO klasa "BO".
+    #    Managerowie i supervisorzy nie mają się pojawiać w żadnym zestawieniu osób.
+    #  • cinema (średnia kina) — CAŁA populacja, łącznie z nie-BO, bo realnie
+    #    przekładają się na wynik całościowy kina.
+    # Uwaga: filtrujemy po kolumnie UserClassName, NIE po nazwisku — w danych bywają
+    # supervisorzy z "BO" w nazwie (np. "Rafal Wilkolek BO") i BO bez niego.
+    if "UserClassName" in d.columns:
+        _is_bo = d["UserClassName"].astype(str).str.strip().eq("BO")
+    else:
+        _is_bo = pd.Series(True, index=d.index)  # brak kolumny → nie wykluczamy nikogo
+    d_bo = d.loc[_is_bo]
+    users = sorted(d_bo["UserFullName"].dropna().unique())
 
     m_extra = d["__pnorm"] == "extranachossauce"
     m_base  = d["__pnorm"].isin(NACHOS_BASE_NORM)
@@ -418,7 +440,9 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     m_chips_den = d["__pnorm"].isin(CHIPS_DEN_NORM)
 
     def _sum_by_user(mask):
-        return d.loc[mask].groupby("UserFullName")["__q"].sum().reindex(users, fill_value=0)
+        # mask jest liczona na pełnym d; zawężamy do BO przez indeks, bo per_user
+        # dotyczy wyłącznie BO (managerowie/supervisorzy nie trafiają do rankingów).
+        return d.loc[mask & _is_bo].groupby("UserFullName")["__q"].sum().reindex(users, fill_value=0)
 
     extra  = _sum_by_user(m_extra); base = _sum_by_user(m_base)
     flav   = _sum_by_user(m_flav);  bpop = _sum_by_user(m_bpop)
@@ -429,9 +453,9 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     chips  = _sum_by_user(m_chips)
     chips_den = _sum_by_user(m_chips_den)
 
-    # Liczba transakcji na osobę (ramka jest już bez CAF/VIP)
+    # Liczba transakcji na osobę (ramka jest już bez CAF/VIP; tu zawężona do BO)
     if "TransactionId" in d.columns:
-        txc = d.groupby("UserFullName")["TransactionId"].nunique().reindex(users, fill_value=0)
+        txc = d_bo.groupby("UserFullName")["TransactionId"].nunique().reindex(users, fill_value=0)
     else:
         txc = pd.Series([0] * len(users), index=users)
     txc_f = txc.astype("Float64")
@@ -445,9 +469,9 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
     # % Chipsy – Lay's + Cheetos / opakowania popcorn 5,2l + 6,5l
     pct_chipsy = (chips / chips_den.replace(0, pd.NA) * 100).astype("Float64")
 
-    # Średnia wartość transakcji na osobę (dedup NetAmount na poziomie transakcji)
+    # Średnia wartość transakcji na osobę (dedup NetAmount na poziomie transakcji, tylko BO)
     if {"TransactionId", "NetAmount"}.issubset(d.columns):
-        grp = d.groupby(["UserFullName", "TransactionId"])["NetAmount"]
+        grp = d_bo.groupby(["UserFullName", "TransactionId"])["NetAmount"]
         per_tx = grp.first().where(grp.nunique(dropna=True) <= 1, grp.sum(min_count=1))
         revenue = per_tx.groupby("UserFullName").sum(min_count=1).reindex(users)
         avg_tx = (revenue / txc_f.replace(0, pd.NA)).astype("Float64")
@@ -667,7 +691,7 @@ with tab_indy:
         with cols[0]:
             picked = st.date_input("Zakres dat (włącznie)", value=(min_d, max_d), min_value=min_d, max_value=max_d, key="indy_date")
         with cols[1]:
-            users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
+            users_all = sorted(_keep_bo(df).get("UserFullName", pd.Series(dtype=str)).dropna().unique())
             sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user")
         d_from, d_to = picked if isinstance(picked, tuple) and len(picked) == 2 else (min_d, max_d)
         mask = (df["__date"] >= d_from) & (df["__date"] <= d_to)
@@ -675,7 +699,7 @@ with tab_indy:
     else:
         st.warning("Brak dat — używam wszystkich wierszy.")
         df_all = df.copy()
-        users_all = sorted(df.get("UserFullName", pd.Series(dtype=str)).dropna().unique())
+        users_all = sorted(_keep_bo(df).get("UserFullName", pd.Series(dtype=str)).dropna().unique())
         sel_user = st.selectbox("Zleceniobiorca", options=users_all, index=0 if users_all else None, key="indy_user_nodate")
 
     bar_df  = _exclude_caf_vip(df_all)
