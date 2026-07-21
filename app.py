@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import json
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -548,6 +548,229 @@ def share_bar_chart(df_in: pd.DataFrame, cat_col: str, val_col: str,
     return (bars + labels).properties(height=max(130, height_per_bar * len(d)))
 
 
+# ================= EKSPORT PDF (zakładka Zleceniobiorca) =================
+# Generuje jednoosobowy raport PDF do wysyłki mailem. Raport zawiera wyłącznie
+# dane wybranej osoby zestawione ze średnią kina — nigdy nazwisk innych osób,
+# więc jest z natury bezpieczny prywatnościowo.
+_PDF_FONTS_READY = False
+
+def _ensure_pdf_fonts():
+    """Rejestruje w reportlab fonty DejaVu (z pakietu matplotlib — zawsze obecne,
+    z pełnym kompletem polskich glifów). Bez osadzania plików i pobierania w runtime."""
+    global _PDF_FONTS_READY
+    if _PDF_FONTS_READY:
+        return
+    from matplotlib import font_manager as _fm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfbase.pdfmetrics import registerFontFamily
+    ttf = os.path.join(os.path.dirname(_fm.__file__), "mpl-data", "fonts", "ttf")
+    pdfmetrics.registerFont(TTFont("DejaVu", os.path.join(ttf, "DejaVuSans.ttf")))
+    pdfmetrics.registerFont(TTFont("DejaVu-Bold", os.path.join(ttf, "DejaVuSans-Bold.ttf")))
+    pdfmetrics.registerFont(TTFont("DejaVuSerif-Bold", os.path.join(ttf, "DejaVuSerif-Bold.ttf")))
+    registerFontFamily("DejaVu", normal="DejaVu", bold="DejaVu-Bold")
+    _PDF_FONTS_READY = True
+
+def _pdf_pln(x):
+    if x is None: return "—"
+    return f"{x:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+
+def _pdf_pct(x):
+    if x is None: return "—"
+    return f"{x:.1f}".replace(".", ",") + " %"
+
+def _pdf_dumbbell_png(pct_rows):
+    """pct_rows: [(label, uval, cval), ...] tylko z uval != None. Zwraca BytesIO z PNG."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager as fm
+    ttf = os.path.join(os.path.dirname(fm.__file__), "mpl-data", "fonts", "ttf")
+    prop = fm.FontProperties(fname=os.path.join(ttf, "DejaVuSans.ttf"))
+    propb = fm.FontProperties(fname=os.path.join(ttf, "DejaVuSans-Bold.ttf"))
+
+    labels = [r[0] for r in pct_rows]
+    uvals  = [float(r[1]) for r in pct_rows]
+    cvals  = [0.0 if r[2] is None else float(r[2]) for r in pct_rows]
+    green, red, gray, ink = "#16a34a", "#dc2626", "#9a988f", "#1C1B1A"
+    n = len(pct_rows)
+    ys = list(range(n))[::-1]
+    dmax = max(uvals + cvals + [1.0])
+    top = max(30.0, math.ceil(dmax * 1.28 / 10.0) * 10.0)
+
+    fig_h = max(1.6, 0.52 * n + 0.5)
+    fig, ax = plt.subplots(figsize=(6.6, fig_h), dpi=200)
+    for y, u, c in zip(ys, uvals, cvals):
+        col = green if u >= c else red
+        ax.plot([c, u], [y, y], color=col, lw=2.4, alpha=0.4, solid_capstyle="round", zorder=1)
+        ax.scatter([c], [y], s=70, color=gray, zorder=2)
+        ax.scatter([u], [y], s=115, color=col, zorder=3)
+        d = u - c
+        sign = "+" if d >= 0 else "\u2212"
+        ax.text(top, y, sign + f"{abs(d):.1f}".replace(".", ",") + " p.p.",
+                va="center", ha="right", color=col, fontproperties=propb, fontsize=8.5)
+    ax.set_yticks(ys)
+    ax.set_yticklabels(labels, fontproperties=prop, fontsize=9, color=ink)
+    ax.set_xlim(0, top * 1.16)
+    ax.set_ylim(-0.6, n - 0.4)
+    ax.set_xlabel("%", fontproperties=prop, fontsize=8, color=ink)
+    for xt in ax.get_xticklabels():
+        xt.set_fontproperties(prop); xt.set_fontsize(8)
+    ax.tick_params(length=0)
+    for s in ["top", "right", "left"]:
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color("#cfcdc2")
+    ax.grid(axis="x", color="#ecebe4", lw=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    fig.tight_layout(pad=0.4)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
+    """Buduje raport PDF (bytes) dla jednej osoby.
+    rows: [[label, uval, cval], ...]  (label 'Średnia wartość...' => zł, inaczej %)
+    tx_counts: {'bar':int|None, 'cafe':..., 'vip':...}
+    period: (date_od, date_do) lub None."""
+    _ensure_pdf_fonts()
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+                                    Image as RLImage)
+    from reportlab.lib.styles import ParagraphStyle
+
+    ink = colors.HexColor("#1C1B1A"); paper = colors.HexColor("#FAF9F5")
+    muted = colors.HexColor("#8A8880"); line = colors.HexColor("#E3E0D6")
+    green_bg = colors.HexColor("#dcfce7"); green_tx = colors.HexColor("#065f46")
+    red_bg = colors.HexColor("#fee2e2");  red_tx = colors.HexColor("#7f1d1d")
+
+    st_wm   = ParagraphStyle("wm", fontName="DejaVuSerif-Bold", fontSize=22, leading=24, textColor=ink)
+    st_tag  = ParagraphStyle("tag", fontName="DejaVu", fontSize=9, leading=12, textColor=muted)
+    st_h    = ParagraphStyle("h", fontName="DejaVu-Bold", fontSize=13, leading=16, textColor=ink, spaceBefore=10, spaceAfter=5)
+    st_name = ParagraphStyle("nm", fontName="DejaVu-Bold", fontSize=16, leading=20, textColor=ink, spaceAfter=6)
+    st_meta = ParagraphStyle("mt", fontName="DejaVu", fontSize=9.5, leading=13, textColor=muted)
+    st_foot = ParagraphStyle("ft", fontName="DejaVu", fontSize=7.5, leading=10, textColor=muted)
+    st_cell = ParagraphStyle("cell", fontName="DejaVu", fontSize=9.5, leading=12, textColor=ink)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=16*mm, bottomMargin=14*mm,
+                            leftMargin=16*mm, rightMargin=16*mm,
+                            title=f"CineStats — {sel_user}", author="CineStats")
+    story = []
+    story.append(Paragraph("CineStats", st_wm))
+    story.append(Paragraph("sprzedaż i wskaźniki", st_tag))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(str(sel_user), st_name))
+    if period and period[0] is not None:
+        okres = f"Okres: {period[0].strftime('%d.%m.%Y')} – {period[1].strftime('%d.%m.%Y')}"
+    else:
+        okres = "Okres: cały dostępny zakres"
+    story.append(Paragraph(okres, st_meta))
+    story.append(Paragraph("Wygenerowano: " + datetime.now().strftime("%d.%m.%Y %H:%M"), st_meta))
+    story.append(Spacer(1, 10))
+
+    def _ti(v): return "—" if v is None else format(int(v), ",").replace(",", " ")
+    tx_data = [
+        [Paragraph("Transakcje — bar", st_cell), Paragraph("Transakcje — cafe", st_cell), Paragraph("Transakcje — VIP", st_cell)],
+        [Paragraph(f"<b>{_ti(tx_counts.get('bar'))}</b>", st_cell), Paragraph(f"<b>{_ti(tx_counts.get('cafe'))}</b>", st_cell), Paragraph(f"<b>{_ti(tx_counts.get('vip'))}</b>", st_cell)],
+    ]
+    tx_tbl = Table(tx_data, colWidths=[doc.width/3.0]*3)
+    tx_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), paper), ("BOX", (0,0), (-1,-1), 0.5, line),
+        ("INNERGRID", (0,0), (-1,-1), 0.5, line),
+        ("TOPPADDING", (0,0), (-1,-1), 6), ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("LEFTPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(tx_tbl)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("Wskaźniki na tle średniej kina", st_h))
+    header = ["Wskaźnik", str(sel_user), "Średnia kina", "Δ vs kino"]
+    table_data = [[Paragraph(f"<b>{h}</b>", st_cell) for h in header]]
+    style_cmds = [
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#F1EFE8")),
+        ("LINEBELOW", (0,0), (-1,0), 0.6, line),
+        ("FONTNAME", (0,0), (-1,-1), "DejaVu"), ("FONTSIZE", (0,0), (-1,-1), 9.5),
+        ("TOPPADDING", (0,0), (-1,-1), 5), ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING", (0,0), (-1,-1), 7), ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("ALIGN", (1,0), (-1,-1), "RIGHT"),
+    ]
+    for i, row in enumerate(rows, start=1):
+        label, uval, cval = row[0], row[1], row[2]
+        is_money = str(label).startswith("Średnia wartość")
+        u_txt = _pdf_pln(uval) if is_money else _pdf_pct(uval)
+        c_txt = _pdf_pln(cval) if is_money else _pdf_pct(cval)
+        if uval is not None and cval is not None:
+            dnum = float(uval) - float(cval)
+            sign = "+" if dnum >= 0 else "\u2212"
+            if is_money:
+                delta_str = sign + f"{abs(dnum):,.2f}".replace(",", " ").replace(".", ",") + " zł"
+            else:
+                delta_str = sign + f"{abs(dnum):.1f}".replace(".", ",") + " p.p."
+            if dnum > 0:
+                style_cmds += [("BACKGROUND", (3,i), (3,i), green_bg), ("TEXTCOLOR", (3,i), (3,i), green_tx)]
+            elif dnum < 0:
+                style_cmds += [("BACKGROUND", (3,i), (3,i), red_bg), ("TEXTCOLOR", (3,i), (3,i), red_tx)]
+        else:
+            delta_str = ""
+        table_data.append([Paragraph(str(label), st_cell), Paragraph(u_txt, st_cell),
+                           Paragraph(c_txt, st_cell), Paragraph(delta_str, st_cell)])
+        if i % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0,i), (2,i), colors.HexColor("#FBFAF6")))
+    cmp_tbl = Table(table_data, colWidths=[doc.width*0.40, doc.width*0.20, doc.width*0.20, doc.width*0.20])
+    cmp_tbl.setStyle(TableStyle(style_cmds))
+    story.append(cmp_tbl)
+    story.append(Spacer(1, 12))
+
+    pct_rows = [(l, u, c) for (l, u, c) in ((r[0], r[1], r[2]) for r in rows)
+                if not str(l).startswith("Średnia wartość") and u is not None]
+    if pct_rows:
+        story.append(Paragraph("Porównanie wskaźników procentowych", st_h))
+        png = _pdf_dumbbell_png(pct_rows)
+        from reportlab.lib.utils import ImageReader
+        iw, ih = ImageReader(png).getSize()
+        w = doc.width; h = w * ih / iw
+        story.append(RLImage(png, width=w, height=h))
+        story.append(Paragraph("Szara kropka = średnia kina · kolorowa kropka = wybrany zleceniobiorca", st_tag))
+
+    if sets_rows:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Struktura sprzedaży — zestawy", st_h))
+        sd = [[Paragraph("<b>Zestaw</b>", st_cell), Paragraph("<b>Sztuki</b>", st_cell), Paragraph("<b>Udział</b>", st_cell)]]
+        for r in sets_rows:
+            szt = r.get("Sztuki"); ud = r.get("Udział (%)")
+            sd.append([Paragraph(str(r.get("Zestaw","")), st_cell),
+                       Paragraph("—" if szt is None else format(int(szt), ",").replace(",", " "), st_cell),
+                       Paragraph(_pdf_pct(ud), st_cell)])
+        stbl = Table(sd, colWidths=[doc.width*0.5, doc.width*0.25, doc.width*0.25])
+        stbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#F1EFE8")),
+            ("LINEBELOW", (0,0), (-1,0), 0.6, line),
+            ("FONTNAME", (0,0), (-1,-1), "DejaVu"), ("FONTSIZE", (0,0), (-1,-1), 9.5),
+            ("ALIGN", (1,0), (-1,-1), "RIGHT"),
+            ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING", (0,0), (-1,-1), 7),
+        ]))
+        story.append(stbl)
+
+    story.append(Spacer(1, 16))
+    story.append(Paragraph("Dane poufne — wyłącznie do wiadomości adresata. Wygenerowano automatycznie w CineStats.", st_foot))
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
+
+@st.cache_data(show_spinner=False)
+def cached_person_pdf(sel_user, period, rows_tuple, tx_tuple, sets_tuple):
+    """Cache po (osoba, okres, dane) — ten sam wybór nie generuje PDF ponownie przy rerunie."""
+    rows = [list(r) for r in rows_tuple]
+    tx = {"bar": tx_tuple[0], "cafe": tx_tuple[1], "vip": tx_tuple[2]}
+    sets_rows = [{"Zestaw": s[0], "Sztuki": s[1], "Udział (%)": s[2]} for s in sets_tuple]
+    return build_person_pdf(sel_user, period, rows, tx, sets_rows)
+
+
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
     st.subheader("Tabela wskaźników")
@@ -878,6 +1101,35 @@ with tab_indy:
             st.dataframe(disp, use_container_width=True, hide_index=True)
     except Exception:
         st.dataframe(disp, use_container_width=True, hide_index=True)
+
+    # --- Eksport PDF (do wysyłki mailem zleceniobiorcy) ---
+    # Raport zawiera wyłącznie dane wybranej osoby na tle średniej kina.
+    try:
+        _pdf_rows = tuple((r[0], r[1], r[2]) for r in rows if r[1] is not None)
+        # struktura zestawów dla tej osoby (samodzielne, spójne z _norm_key)
+        _bset = dff[dff["UserFullName"] == sel_user]
+        _bpn = _bset["ProductName"].map(_norm_key)
+        _bq = pd.to_numeric(_bset.get("Quantity"), errors="coerce").fillna(0)
+        _tot_sets = float(_bq[_bpn.isin(SETS_NORM)].sum())
+        _sets_tuple = tuple(
+            (nm, float(_bq[_bpn == _norm_key(nm)].sum()),
+             (None if _tot_sets == 0 else float(_bq[_bpn == _norm_key(nm)].sum()) / _tot_sets * 100))
+            for nm in SETS_LIST
+        )
+        _sets_tuple = tuple(sorted(_sets_tuple, key=lambda x: (x[2] or 0), reverse=True))
+        try:
+            _period = (d_from, d_to)
+        except NameError:
+            _period = None
+        _pdf_bytes = cached_person_pdf(sel_user, _period, _pdf_rows,
+                                       (tx_bar, tx_cafe, tx_vip), _sets_tuple)
+        _safe = re.sub(r"[^\w\-]+", "_", str(sel_user)).strip("_") or "zleceniobiorca"
+        _ptag = f"_{d_from:%Y%m%d}-{d_to:%Y%m%d}" if _period else ""
+        st.download_button("⬇️ Pobierz PDF (do wysyłki mailem)", data=_pdf_bytes,
+                           file_name=f"CineStats_{_safe}{_ptag}.pdf", mime="application/pdf")
+        st.caption("Raport zawiera wyłącznie dane tej osoby na tle średniej kina — bez wyników innych zleceniobiorców.")
+    except Exception as _pdf_ex:
+        st.warning(f"Nie udało się przygotować PDF: {_pdf_ex}")
 
     # Wykres porównawczy (średnie wartości transakcji pokazują karty w "Zestawienie" powyżej)
     st.markdown("### Porównanie ze średnią kina")
