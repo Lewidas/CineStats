@@ -20,6 +20,11 @@ import altair as alt
 # 4) W chmurze korzystaj z trybu "Wgrywanie plików" (zakładka "Dane").
 # =====================================================================
 
+# Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
+# Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
+# (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
+APP_VERSION = "2026.07.23"
+
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
 # ---------- Logotyp ----------
@@ -329,6 +334,7 @@ tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
     st.subheader("Ustawienia źródła danych")
+    st.caption(f"Wersja aplikacji: {APP_VERSION}")
     data_mode = st.radio("Źródło danych", ["Wgrywanie plików", "Folder lokalny"], horizontal=True, index=0)
 
     if data_mode == "Wgrywanie plików":
@@ -778,13 +784,19 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
     pct_rows = [(l, u, c) for (l, u, c) in ((r[0], r[1], r[2]) for r in rows)
                 if not str(l).startswith("Średnia wartość") and u is not None]
     if pct_rows:
-        story.append(Paragraph("Porównanie wskaźników procentowych", st_h))
-        png = _pdf_dumbbell_png(pct_rows)
-        from reportlab.lib.utils import ImageReader
-        iw, ih = ImageReader(png).getSize()
-        w = doc.width; h = w * ih / iw
-        story.append(RLImage(png, width=w, height=h))
-        story.append(Paragraph("Szara kropka = średnia kina · kolorowa kropka = wybrany zleceniobiorca", st_tag))
+        # Awaria rysowania nie może wywalić całego raportu — tabela powyżej niesie
+        # te same liczby, więc raport bez wykresu wciąż jest użyteczny.
+        try:
+            png = _pdf_dumbbell_png(pct_rows)
+        except Exception:
+            png = None
+        if png is not None:
+            story.append(Paragraph("Porównanie wskaźników procentowych", st_h))
+            from reportlab.lib.utils import ImageReader
+            iw, ih = ImageReader(png).getSize()
+            w = doc.width; h = w * ih / iw
+            story.append(RLImage(png, width=w, height=h))
+            story.append(Paragraph("Szara kropka = średnia kina · kolorowa kropka = wybrany zleceniobiorca", st_tag))
 
     if sets_rows:
         story.append(Spacer(1, 10))
@@ -810,9 +822,14 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
         story.append(Spacer(1, 4))
         story.append(Paragraph("Razem zestawów: " + format(int(_tot_sets), ",").replace(",", " "), st_tag))
 
-        # Wykres udziałów — ten sam układ co w aplikacji (posortowane poziome słupki)
-        _sb = _pdf_share_bar_png([(r.get("Zestaw", ""), r.get("Sztuki"), r.get("Udział (%)")) for r in sets_rows],
-                                 val_title="Sztuki")
+        # Wykres udziałów — ten sam układ co w aplikacji (posortowane poziome słupki).
+        # Awaria rysowania nie może wywalić całego raportu — w najgorszym razie
+        # zostaje sama tabela powyżej.
+        try:
+            _sb = _pdf_share_bar_png([(r.get("Zestaw", ""), r.get("Sztuki"), r.get("Udział (%)")) for r in sets_rows],
+                                     val_title="Sztuki")
+        except Exception:
+            _sb = None
         if _sb is not None:
             from reportlab.lib.utils import ImageReader as _IR
             _iw, _ih = _IR(_sb).getSize()
@@ -821,7 +838,9 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
             story.append(RLImage(_sb, width=_w, height=_h))
 
     story.append(Spacer(1, 16))
-    story.append(Paragraph("Dane poufne — wyłącznie do wiadomości adresata. Wygenerowano automatycznie w CineStats.", st_foot))
+    story.append(Paragraph(
+        "Dane poufne — wyłącznie do wiadomości adresata. "
+        f"Wygenerowano automatycznie w CineStats {APP_VERSION}.", st_foot))
     doc.build(story)
     buf.seek(0)
     return buf.getvalue()
