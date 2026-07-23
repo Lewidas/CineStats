@@ -629,6 +629,56 @@ def _pdf_dumbbell_png(pct_rows):
     buf.seek(0)
     return buf
 
+def _pdf_share_bar_png(items, val_title="Sztuki"):
+    """Poziomy wykres udziałów do PDF — odpowiednik share_bar_chart z aplikacji.
+    items: [(etykieta, wartosc, udzial_pct), ...]. Zwraca BytesIO z PNG albo None."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager as fm
+    ttf = os.path.join(os.path.dirname(fm.__file__), "mpl-data", "fonts", "ttf")
+    prop = fm.FontProperties(fname=os.path.join(ttf, "DejaVuSans.ttf"))
+
+    data = [(str(a), float(b or 0.0), c) for a, b, c in items if c is not None]
+    if not data:
+        return None
+    data.sort(key=lambda z: z[1], reverse=True)
+    vmax = max(z[1] for z in data)
+    if vmax <= 0:
+        return None
+
+    labels = [z[0] for z in data]
+    vals = [z[1] for z in data]
+    n = len(data)
+    ys = list(range(n))[::-1]  # największy na górze
+    ink, bar_col = "#1C1B1A", "#2a78d6"
+
+    fig_h = max(1.4, 0.40 * n + 0.55)
+    fig, ax = plt.subplots(figsize=(6.6, fig_h), dpi=200)
+    ax.barh(ys, vals, height=0.55, color=bar_col, zorder=2)
+    for y, (lab, v, pct) in zip(ys, data):
+        ax.text(v + vmax * 0.015, y, f"{float(pct):.1f}".replace(".", ",") + " %",
+                va="center", ha="left", color=ink, fontproperties=prop, fontsize=8.5, zorder=3)
+    ax.set_yticks(ys)
+    ax.set_yticklabels(labels, fontproperties=prop, fontsize=9, color=ink)
+    ax.set_xlim(0, vmax * 1.20)  # zapas na etykiety udziałów
+    ax.set_ylim(-0.6, n - 0.4)
+    ax.set_xlabel(val_title, fontproperties=prop, fontsize=8, color=ink)
+    for xt in ax.get_xticklabels():
+        xt.set_fontproperties(prop); xt.set_fontsize(8)
+    ax.tick_params(length=0)
+    for s in ["top", "right", "left"]:
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color("#cfcdc2")
+    ax.grid(axis="x", color="#ecebe4", lw=0.8, zorder=0)
+    ax.set_axisbelow(True)
+    fig.tight_layout(pad=0.4)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
 def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
     """Buduje raport PDF (bytes) dla jednej osoby.
     rows: [[label, uval, cval], ...]  (label 'Średnia wartość...' => zł, inaczej %)
@@ -755,6 +805,20 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
             ("LEFTPADDING", (0,0), (-1,-1), 7),
         ]))
         story.append(stbl)
+
+        _tot_sets = sum(float(r.get("Sztuki") or 0.0) for r in sets_rows)
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Razem zestawów: " + format(int(_tot_sets), ",").replace(",", " "), st_tag))
+
+        # Wykres udziałów — ten sam układ co w aplikacji (posortowane poziome słupki)
+        _sb = _pdf_share_bar_png([(r.get("Zestaw", ""), r.get("Sztuki"), r.get("Udział (%)")) for r in sets_rows],
+                                 val_title="Sztuki")
+        if _sb is not None:
+            from reportlab.lib.utils import ImageReader as _IR
+            _iw, _ih = _IR(_sb).getSize()
+            _w = doc.width; _h = _w * _ih / _iw
+            story.append(Spacer(1, 6))
+            story.append(RLImage(_sb, width=_w, height=_h))
 
     story.append(Spacer(1, 16))
     story.append(Paragraph("Dane poufne — wyłącznie do wiadomości adresata. Wygenerowano automatycznie w CineStats.", st_foot))
