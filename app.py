@@ -1102,35 +1102,6 @@ with tab_indy:
     except Exception:
         st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    # --- Eksport PDF (do wysyłki mailem zleceniobiorcy) ---
-    # Raport zawiera wyłącznie dane wybranej osoby na tle średniej kina.
-    try:
-        _pdf_rows = tuple((r[0], r[1], r[2]) for r in rows if r[1] is not None)
-        # struktura zestawów dla tej osoby (samodzielne, spójne z _norm_key)
-        _bset = dff[dff["UserFullName"] == sel_user]
-        _bpn = _bset["ProductName"].map(_norm_key)
-        _bq = pd.to_numeric(_bset.get("Quantity"), errors="coerce").fillna(0)
-        _tot_sets = float(_bq[_bpn.isin(SETS_NORM)].sum())
-        _sets_tuple = tuple(
-            (nm, float(_bq[_bpn == _norm_key(nm)].sum()),
-             (None if _tot_sets == 0 else float(_bq[_bpn == _norm_key(nm)].sum()) / _tot_sets * 100))
-            for nm in SETS_LIST
-        )
-        _sets_tuple = tuple(sorted(_sets_tuple, key=lambda x: (x[2] or 0), reverse=True))
-        try:
-            _period = (d_from, d_to)
-        except NameError:
-            _period = None
-        _pdf_bytes = cached_person_pdf(sel_user, _period, _pdf_rows,
-                                       (tx_bar, tx_cafe, tx_vip), _sets_tuple)
-        _safe = re.sub(r"[^\w\-]+", "_", str(sel_user)).strip("_") or "zleceniobiorca"
-        _ptag = f"_{d_from:%Y%m%d}-{d_to:%Y%m%d}" if _period else ""
-        st.download_button("⬇️ Pobierz PDF (do wysyłki mailem)", data=_pdf_bytes,
-                           file_name=f"CineStats_{_safe}{_ptag}.pdf", mime="application/pdf")
-        st.caption("Raport zawiera wyłącznie dane tej osoby na tle średniej kina — bez wyników innych zleceniobiorców.")
-    except Exception as _pdf_ex:
-        st.warning(f"Nie udało się przygotować PDF: {_pdf_ex}")
-
     # Wykres porównawczy (średnie wartości transakcji pokazują karty w "Zestawienie" powyżej)
     st.markdown("### Porównanie ze średnią kina")
     _green, _red, _gray = "#16a34a", "#dc2626", "#6b7280"
@@ -1252,6 +1223,111 @@ with tab_indy:
                     st.caption("Nie udało się wyrenderować wykresu udziałów (zestawy — osoba).")
     except Exception as ex:
         st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
+
+    # ============ Raporty PDF — pojedynczy + hurtowy (na dole podstrony) ============
+    st.divider()
+    st.markdown("### 📄 Raporty PDF")
+
+    try:
+        _period = (d_from, d_to)
+    except NameError:
+        _period = None
+    _cafe_cin = avg_tr_cafe_cinema
+    _vip_cin = avg_tr_vip_cinema
+
+    def _rows_for(person):
+        """Wiersze raportu dla osoby — z pu (bar) + cafe/vip + średnia kina (cin).
+        Ta sama ścieżka dla pojedynczego i hurtowego, więc dane są identyczne."""
+        def _v(col):
+            if person not in pu.index: return None
+            _vv = pu.loc[person].get(col)
+            return None if pd.isna(_vv) else float(_vv)
+        _r = [
+            ["Średnia wartość transakcji bar",  _v("avg_tx"),                   cin.get("avg_tx")],
+            ["Średnia wartość transakcji cafe", _avg_user_for(cafe_df, person), _cafe_cin],
+            ["Średnia wartość transakcji vip",  _avg_user_for(vip_df, person),  _vip_cin],
+            ["% Extra Sos",        _v("pct_extra"),         cin.get("pct_extra")],
+            ["% Popcorny smakowe", _v("pct_popcorny"),      cin.get("pct_popcorny")],
+            ["% ShareCorn",        _v("pct_sharecorn"),     cin.get("pct_sharecorn")],
+            ["% Zestawy",          _v("pct_sets"),          cin.get("pct_sets")],
+            ["% Nachos Serowe",    _v("pct_nachos_serowe"), cin.get("pct_nachos_serowe")],
+            ["% Chipsy",           _v("pct_chipsy"),        cin.get("pct_chipsy")],
+        ]
+        return tuple((x[0], x[1], x[2]) for x in _r if x[1] is not None)
+
+    def _sets_tuple_for(person):
+        _b = bar_df[bar_df["UserFullName"] == person]
+        _pn = _b["ProductName"].map(_norm_key)
+        _q = pd.to_numeric(_b.get("Quantity"), errors="coerce").fillna(0)
+        _tot = float(_q[_pn.isin(SETS_NORM)].sum())
+        _t = tuple((nm, float(_q[_pn == _norm_key(nm)].sum()),
+                    (None if _tot == 0 else float(_q[_pn == _norm_key(nm)].sum()) / _tot * 100))
+                   for nm in SETS_LIST)
+        return tuple(sorted(_t, key=lambda z: (z[2] or 0), reverse=True))
+
+    def _tx_tuple_for(person):
+        return (_count_tx(bar_df, person), _count_tx(cafe_df, person), _count_tx(vip_df, person))
+
+    def _fname_for(person):
+        # bez daty; diakrytyki zdjęte → nazwa uniwersalna na każdym systemie/ZIP
+        _s = unicodedata.normalize("NFKD", str(person))
+        _s = "".join(c for c in _s if not unicodedata.combining(c))
+        _s = re.sub(r"[^A-Za-z0-9\-]+", "_", _s).strip("_") or "zleceniobiorca"
+        return f"CineStats_{_s}.pdf"
+
+    _col_a, _col_b = st.columns(2)
+
+    # --- Pojedynczy raport (wybrana osoba) ---
+    with _col_a:
+        if sel_user is not None and sel_user in pu.index:
+            try:
+                _pdf1 = cached_person_pdf(sel_user, _period, _rows_for(sel_user),
+                                          _tx_tuple_for(sel_user), _sets_tuple_for(sel_user))
+                st.download_button("⬇️ Pobierz PDF wybranej osoby", data=_pdf1,
+                                   file_name=_fname_for(sel_user), mime="application/pdf",
+                                   use_container_width=True)
+            except Exception as _ex1:
+                st.warning(f"Nie udało się przygotować PDF: {_ex1}")
+        else:
+            st.caption("Wybierz zleceniobiorcę powyżej, aby pobrać jego raport.")
+
+    # --- Hurtowy: wszyscy zleceniobiorcy do jednego ZIP ---
+    with _col_b:
+        _all_bo = list(pu.index)
+        _sig = (str(_period), tuple(_all_bo))
+        # zmiana okresu/zestawu osób unieważnia wcześniej przygotowany ZIP
+        if st.session_state.get("indy_zip_sig") != _sig:
+            st.session_state["indy_zip_bytes"] = None
+        if st.button(f"📦 Przygotuj ZIP ({len(_all_bo)} raportów)", use_container_width=True,
+                     disabled=(len(_all_bo) == 0)):
+            import zipfile as _zf
+            _buf = io.BytesIO()
+            _prog = st.progress(0.0)
+            with st.spinner("Generuję raporty wszystkich zleceniobiorców…"):
+                with _zf.ZipFile(_buf, "w", _zf.ZIP_DEFLATED) as _z:
+                    _seen = {}
+                    for _i, _p in enumerate(_all_bo):
+                        _pdfb = cached_person_pdf(_p, _period, _rows_for(_p),
+                                                  _tx_tuple_for(_p), _sets_tuple_for(_p))
+                        _fn = _fname_for(_p)
+                        if _fn in _seen:  # zabezpieczenie przed nadpisaniem (praktycznie nie wystąpi)
+                            _seen[_fn] += 1; _fn = _fn[:-4] + f"_{_seen[_fn]}.pdf"
+                        else:
+                            _seen[_fn] = 1
+                        _z.writestr(_fn, _pdfb)
+                        _prog.progress((_i + 1) / max(1, len(_all_bo)))
+            _prog.empty()
+            _buf.seek(0)
+            st.session_state["indy_zip_bytes"] = _buf.getvalue()
+            st.session_state["indy_zip_sig"] = _sig
+        if st.session_state.get("indy_zip_bytes"):
+            st.download_button("⬇️ Pobierz wszystkie raporty (ZIP)",
+                               data=st.session_state["indy_zip_bytes"],
+                               file_name="CineStats_raporty.zip", mime="application/zip",
+                               use_container_width=True)
+
+    st.caption("Każdy raport zawiera wyłącznie dane danej osoby na tle średniej kina — bez wyników innych "
+               "zleceniobiorców. Pliki nazywane są „CineStats_Imię_Nazwisko_BO”.")
 
 
 # ---------- Zakładka: Najlepsi ----------
