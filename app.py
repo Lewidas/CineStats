@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.23"
+APP_VERSION = "2026.07.24"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -854,6 +854,46 @@ def cached_person_pdf(sel_user, period, rows_tuple, tx_tuple, sets_tuple):
     return build_person_pdf(sel_user, period, rows, tx, sets_rows)
 
 
+# ================= LISTA MAILINGOWA (pod Power Automate) =================
+# Dopasowanie osób-BO do adresów e-mail. Nazwiska w danych mają sufiks " BO"
+# (np. "Piotr Bielec BO"), a lista z HR zwykle go nie ma — dlatego go zdejmujemy.
+# Diakrytyki składamy do ASCII, bo system kinowy i lista HR mogą różnić się zapisem
+# (uwaga: "ł" NIE rozkłada się przez NFKD, więc mapujemy je jawnie).
+_PL_FOLD = str.maketrans({"ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D"})
+
+def _match_key(name):
+    s = re.sub(r"\s+BO\s*$", "", str(name).strip(), flags=re.IGNORECASE)
+    s = s.translate(_PL_FOLD)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    return "".join(c for c in s if c.isalnum())
+
+def _sorted_key(name):
+    # klucz niezależny od kolejności słów — łapie zapis "Nazwisko Imię"
+    s = re.sub(r"\s+BO\s*$", "", str(name).strip(), flags=re.IGNORECASE)
+    toks = re.findall(r"\w+", s, flags=re.UNICODE)
+    return "".join(sorted(_match_key(t) for t in toks))
+
+def build_mailing_xlsx(rows):
+    """rows: [(plik, zleceniobiorca, email), ...].
+    Zwraca XLSX z prawdziwą Tabelą Excela — akcja Power Automate
+    'List rows present in a table' wymaga obiektu tabeli, nie zwykłego arkusza."""
+    import xlsxwriter
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    ws = wb.add_worksheet("Wysylka")
+    data = [[str(a), str(b), str(c)] for a, b, c in rows] or [["", "", ""]]
+    ws.add_table(0, 0, len(data), 2, {
+        "name": "Wysylka",
+        "style": "Table Style Medium 2",
+        "columns": [{"header": "plik"}, {"header": "zleceniobiorca"}, {"header": "email"}],
+        "data": data,
+    })
+    ws.set_column(0, 0, 42); ws.set_column(1, 1, 28); ws.set_column(2, 2, 34)
+    wb.close(); buf.seek(0)
+    return buf.getvalue()
+
+
 # ---------- Zakładka: Tabela przestawna ----------
 with tab_pivot:
     st.subheader("Tabela wskaźników")
@@ -1358,6 +1398,84 @@ with tab_indy:
         _s = re.sub(r"[^A-Za-z0-9\-]+", "_", _s).strip("_") or "zleceniobiorca"
         return f"CineStats_{_s}.pdf"
 
+    # --- Lista mailingowa (opcjonalna) — dopasowanie adresów do osób, pod Power Automate ---
+    _mail_map = None  # {osoba-BO: email} — gotowe do dołączenia arkusza do ZIP-a
+    with st.expander("📧 Lista mailingowa (opcjonalnie — do wysyłki przez Power Automate)", expanded=False):
+        st.caption("Wgraj plik z dwiema kolumnami: imię i nazwisko oraz e-mail. Dopasuję po nazwisku "
+                   "(radzę sobie z brakiem „BO”, polskimi znakami i odwróconą kolejnością). Po dopasowaniu "
+                   "„Przygotuj ZIP” dołączy arkusz **lista_wysylki.xlsx** gotowy dla Power Automate.")
+        _mail_file = st.file_uploader("Plik z adresami (XLSX/CSV)", type=["xlsx", "csv"], key="mail_list_upl")
+        if _mail_file is not None:
+            try:
+                if _mail_file.name.lower().endswith(".csv"):
+                    _mdf = pd.read_csv(_mail_file, sep=None, engine="python")
+                else:
+                    _mdf = pd.read_excel(_mail_file, engine="openpyxl")
+                _mdf.columns = [str(c).strip() for c in _mdf.columns]
+
+                # kolumna e-mail = ta z największą liczbą wartości zawierających "@"
+                _email_col, _best = None, -1
+                for _c in _mdf.columns:
+                    _cnt = int(_mdf[_c].astype(str).str.contains("@", na=False).sum())
+                    if _cnt > _best:
+                        _best, _email_col = _cnt, _c
+                # kolumna nazwiska: nagłówek z charakterystycznym słowem, inaczej pierwsza nie-mailowa
+                _name_col = None
+                for _c in _mdf.columns:
+                    if _c != _email_col and any(t in _c.lower() for t in
+                                                ["nazw", "imi", "osob", "pracow", "zlecenio", "name"]):
+                        _name_col = _c; break
+                if _name_col is None:
+                    _name_col = next((_c for _c in _mdf.columns if _c != _email_col), None)
+
+                if _email_col is None or _name_col is None or _best <= 0:
+                    st.warning("Nie rozpoznałem kolumn. Potrzebne: kolumna z nazwiskiem i kolumna z adresem "
+                               "e-mail (zawierającym „@”).")
+                else:
+                    _bo_by_key, _bo_by_sorted = {}, {}
+                    for _p in pu.index:
+                        _bo_by_key.setdefault(_match_key(_p), _p)
+                        _bo_by_sorted.setdefault(_sorted_key(_p), _p)
+                    _matched, _reordered, _unmatched_rows, _seen = {}, [], [], set()
+                    for _, _row in _mdf.iterrows():
+                        _nm = str(_row[_name_col]).strip()
+                        _em = str(_row[_email_col]).strip()
+                        if not _nm or _nm.lower() == "nan" or "@" not in _em:
+                            continue
+                        _person = _bo_by_key.get(_match_key(_nm))
+                        _how = "exact"
+                        if _person is None:
+                            _person = _bo_by_sorted.get(_sorted_key(_nm)); _how = "reorder"
+                        if _person is None:
+                            _unmatched_rows.append((_nm, _em)); continue
+                        if _person in _seen:
+                            continue
+                        _seen.add(_person); _matched[_person] = _em
+                        if _how == "reorder":
+                            _reordered.append(_person)
+                    _mail_map = _matched
+                    _missing = [p for p in pu.index if p not in _matched]
+
+                    _m1, _m2, _m3 = st.columns(3)
+                    _m1.metric("Dopasowani", len(_matched))
+                    _m2.metric("BO bez adresu", len(_missing))
+                    _m3.metric("Adresy bez dopasowania", len(_unmatched_rows))
+                    if _reordered:
+                        st.info("Dopasowano po przestawieniu imienia/nazwiska (zweryfikuj): "
+                                + ", ".join(_reordered[:12]) + ("…" if len(_reordered) > 12 else ""))
+                    if _missing:
+                        st.warning("Te osoby (BO) **nie dostaną** raportu — brak adresu w pliku:\n\n- "
+                                   + "\n- ".join(_missing))
+                    if _unmatched_rows:
+                        st.warning("Te wiersze nie pasują do nikogo z BO (literówka albo osoba spoza BO):\n\n- "
+                                   + "\n- ".join(f"{n} → {e}" for n, e in _unmatched_rows[:30])
+                                   + ("\n- …" if len(_unmatched_rows) > 30 else ""))
+                    if _matched:
+                        st.success(f"Gotowe do wysyłki: {len(_matched)} osób. Kliknij „Przygotuj ZIP” — "
+                                   "dołączę arkusz lista_wysylki.xlsx.")
+            except Exception as _mex:
+                st.warning(f"Nie udało się wczytać listy mailingowej: {_mex}")
+
     _col_a, _col_b = st.columns(2)
 
     # --- Pojedynczy raport (wybrana osoba) ---
@@ -1377,8 +1495,9 @@ with tab_indy:
     # --- Hurtowy: wszyscy zleceniobiorcy do jednego ZIP ---
     with _col_b:
         _all_bo = list(pu.index)
-        _sig = (str(_period), tuple(_all_bo))
-        # zmiana okresu/zestawu osób unieważnia wcześniej przygotowany ZIP
+        _mail_sig = tuple(sorted(_mail_map.items())) if _mail_map else ()
+        _sig = (str(_period), tuple(_all_bo), _mail_sig)
+        # zmiana okresu / zestawu osób / listy mailingowej unieważnia wcześniejszy ZIP
         if st.session_state.get("indy_zip_sig") != _sig:
             st.session_state["indy_zip_bytes"] = None
         if st.button(f"📦 Przygotuj ZIP ({len(_all_bo)} raportów)", use_container_width=True,
@@ -1386,6 +1505,7 @@ with tab_indy:
             import zipfile as _zf
             _buf = io.BytesIO()
             _prog = st.progress(0.0)
+            _person_file = {}  # osoba -> realna nazwa pliku w ZIP (spójna z lista_wysylki.xlsx)
             with st.spinner("Generuję raporty wszystkich zleceniobiorców…"):
                 with _zf.ZipFile(_buf, "w", _zf.ZIP_DEFLATED) as _z:
                     _seen = {}
@@ -1398,7 +1518,14 @@ with tab_indy:
                         else:
                             _seen[_fn] = 1
                         _z.writestr(_fn, _pdfb)
+                        _person_file[_p] = _fn
                         _prog.progress((_i + 1) / max(1, len(_all_bo)))
+                    # arkusz wysyłkowy dla Power Automate (tylko osoby z dopasowanym adresem)
+                    if _mail_map:
+                        _mrows = [(_person_file[_p], _p, _mail_map[_p])
+                                  for _p in _all_bo if _p in _mail_map]
+                        if _mrows:
+                            _z.writestr("lista_wysylki.xlsx", build_mailing_xlsx(_mrows))
             _prog.empty()
             _buf.seek(0)
             st.session_state["indy_zip_bytes"] = _buf.getvalue()
