@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.25"
+APP_VERSION = "2026.07.26"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -402,7 +402,7 @@ def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # =============== TABS (podstrony) ===============
-tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["Dane", "Wskaźniki", "Zleceniobiorca", "Najlepsi", "Konkursy", "Cafe", "VIP", "Proporcje"])
+tab_dane, tab_pivot, tab_indy, tab_best, tab_trends, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["Dane", "Wskaźniki", "Zleceniobiorca", "Najlepsi", "Trendy", "Konkursy", "Cafe", "VIP", "Proporcje"])
 
 # ---------- Zakładka: Dane ----------
 with tab_dane:
@@ -614,6 +614,92 @@ def compute_bar_metrics(dff: pd.DataFrame) -> dict:
         cinema["avg_tx"] = None
 
     return {"users": users, "per_user": per_user, "cinema": cinema}
+
+
+# =============== TRENDY: snapshoty miesięczne + historia ===============
+# Snapshot to zamrożone, zagregowane wyniki jednego miesiąca (~15 KB): metryki kina
+# + per osoba. Historia to kilka snapshotów w jednym pliku. Do porównań m/m i kwartał
+# nie potrzeba surowych danych — trzymamy tylko te małe podsumowania.
+SNAPSHOT_SCHEMA = 1
+TREND_METRICS = [
+    ("avg_tx", "Śr. wartość transakcji", "zl"),
+    ("pct_extra", "% Extra Sos", "pct"),
+    ("pct_popcorny", "% Popcorny smakowe", "pct"),
+    ("pct_sharecorn", "% ShareCorn", "pct"),
+    ("pct_sets", "% Zestawy", "pct"),
+    ("pct_nachos_serowe", "% Nachos Serowe", "pct"),
+    ("pct_chipsy", "% Chipsy", "pct"),
+    ("tx_count", "Liczba transakcji", "int"),
+]
+_PL_MONTHS = {1: "Styczeń", 2: "Luty", 3: "Marzec", 4: "Kwiecień", 5: "Maj", 6: "Czerwiec",
+              7: "Lipiec", 8: "Sierpień", 9: "Wrzesień", 10: "Październik", 11: "Listopad", 12: "Grudzień"}
+
+def _snap_num(v):
+    try:
+        f = float(v)
+        return None if pd.isna(f) else round(f, 3)
+    except Exception:
+        return None
+
+def _period_meta(df: pd.DataFrame):
+    """Zwraca (period_key, label, date_from, date_to, full_month) z ramki danych."""
+    import calendar
+    dts = pd.Series(dtype="datetime64[ns]")
+    if "__date" in df.columns:
+        dts = pd.to_datetime(df["__date"], errors="coerce").dropna()
+    if dts.empty and "BusinessDate_date" in df.columns:
+        dts = pd.to_datetime(df["BusinessDate_date"], errors="coerce").dropna()
+    if dts.empty:
+        return None, "Nieznany okres", None, None, False
+    ym = dts.dt.to_period("M")
+    top = ym.value_counts().idxmax()
+    y, m = int(top.year), int(top.month)
+    dfrom, dto = dts.min().date(), dts.max().date()
+    full = (dfrom.day == 1 and dfrom.month == m and dto.month == m
+            and dto.day == calendar.monthrange(y, m)[1])
+    return f"{y:04d}-{m:02d}", f"{_PL_MONTHS[m]} {y}", str(dfrom), str(dto), bool(full)
+
+def build_current_period(df: pd.DataFrame) -> dict:
+    """Buduje snapshot bieżąco wczytanego miesiąca z ramki danych (pełnej, przed CAF/VIP)."""
+    bar = _exclude_caf_vip(df)
+    res = compute_bar_metrics(bar)
+    pu, cin = res["per_user"], res["cinema"]
+    key, label, dfrom, dto, full = _period_meta(df)
+    people = {}
+    for person in pu.index:
+        r = pu.loc[person]
+        people[str(person)] = {k: _snap_num(r.get(k)) for k, _, _ in TREND_METRICS}
+    cinema = {k: _snap_num(cin.get(k)) for k, _, _ in TREND_METRICS}
+    return {
+        "period_key": key, "label": label, "date_from": dfrom, "date_to": dto,
+        "full_month": full, "generated": datetime.now().isoformat(timespec="minutes"),
+        "app_version": APP_VERSION, "rows": int(len(df)), "n_bo": int(len(pu)),
+        "cinema": cinema, "people": people,
+    }
+
+def read_snapshot_bytes(raw_bytes) -> list:
+    """Parsuje wgrany plik snapshotu/historii → lista okresów. Rzuca ValueError, jeśli to nie snapshot."""
+    obj = json.loads(raw_bytes.decode("utf-8") if isinstance(raw_bytes, (bytes, bytearray)) else raw_bytes)
+    if not isinstance(obj, dict) or not obj.get("cinestats_snapshot"):
+        raise ValueError("To nie jest plik snapshotu CineStats.")
+    return [p for p in obj.get("periods", []) if isinstance(p, dict) and p.get("period_key")]
+
+def merge_periods(periods: list) -> list:
+    """Dedup po period_key (nowszy 'generated' wygrywa), posortowane rosnąco po kluczu."""
+    by_key = {}
+    for p in periods:
+        k = p.get("period_key")
+        if not k:
+            continue
+        prev = by_key.get(k)
+        if prev is None or str(p.get("generated", "")) >= str(prev.get("generated", "")):
+            by_key[k] = p
+    return [by_key[k] for k in sorted(by_key)]
+
+def history_json(periods: list) -> str:
+    return json.dumps({"cinestats_snapshot": True, "schema": SNAPSHOT_SCHEMA, "periods": periods},
+                      ensure_ascii=False, indent=1)
+
 
 
 # ---------- Wspólny wykres udziałów: posortowane poziome słupki ----------
@@ -1727,6 +1813,191 @@ with tab_best:
                 st.caption(f"Średnia kina: **{_b_avg:,.2f} zł**".replace(",", " ").replace(".", ","))
         _show_rank(_b_tbl, is_pct=_b_is_pct)
 
+
+# ---------- Zakładka: Trendy ----------
+with tab_trends:
+    st.subheader("Trendy — zmiany miesiąc do miesiąca")
+    st.caption("Porównuje zagregowane wyniki miesięcy z lekkiego pliku historii — nie ładuje "
+               "surowych danych wielu miesięcy. Pętla: wgraj historię, dołącz bieżący miesiąc, "
+               "pobierz zaktualizowaną historię.")
+
+    # 1) Wczytanie historii + bieżącego miesiąca
+    _hist_files = st.file_uploader("Wgraj historię / snapshoty (JSON)", type=["json"],
+                                   accept_multiple_files=True, key="trend_hist")
+    _periods = []
+    for _hf in (_hist_files or []):
+        try:
+            _periods += read_snapshot_bytes(_hf.read())
+        except Exception as _he:
+            st.warning(f"Pominięto „{_hf.name}”: {_he}")
+
+    _cur_df = st.session_state.get("cached_df", pd.DataFrame())
+    _has_cur = not _cur_df.empty
+    _inc = st.checkbox("Dołącz obecnie wczytany miesiąc (z zakładki Dane)",
+                       value=_has_cur, disabled=not _has_cur)
+    if _inc and _has_cur:
+        try:
+            _cur = build_current_period(_cur_df)
+            if _cur.get("period_key"):
+                _periods.append(_cur)
+            else:
+                st.warning("Nie udało się rozpoznać miesiąca z wczytanych danych (brak dat).")
+        except Exception as _ce:
+            st.warning(f"Nie udało się policzyć bieżącego miesiąca: {_ce}")
+
+    _merged = merge_periods(_periods)
+
+    if not _merged:
+        st.info("Wgraj plik historii albo wczytaj miesiąc w zakładce **Dane** i zaznacz „Dołącz "
+                "obecnie wczytany miesiąc”.")
+    else:
+        _names = ", ".join(p["label"] for p in _merged)
+        st.success(f"Wczytano miesięcy: {len(_merged)} — {_names}")
+        st.download_button("⬇️ Pobierz połączoną historię (JSON)",
+                           data=history_json(_merged).encode("utf-8"),
+                           file_name="historia.json", mime="application/json")
+        _partial = [p["label"] for p in _merged if not p.get("full_month", True)]
+        if _partial:
+            st.caption("Okresy niepełne (nie cały miesiąc): " + ", ".join(_partial)
+                       + ". Wskaźniki % i średnie są porównywalne, ale **liczba transakcji** — nie.")
+
+        if len(_merged) < 2:
+            st.info("Potrzeba co najmniej **2 miesięcy**, żeby pokazać zmiany. Na razie jest jeden — "
+                    "dołóż kolejny miesiąc w następnej rundzie.")
+        else:
+            # 2) Wybór porównania
+            _mode = st.radio("Porównanie", ["Miesiąc do miesiąca", "Kwartał (3 mies. wstecz)"],
+                             horizontal=True, key="trend_mode")
+            _B = _merged[-1]
+            if _mode.startswith("Miesiąc"):
+                _A = _merged[-2]
+            else:
+                _A = _merged[max(0, len(_merged) - 4)]
+            st.markdown(f"#### Porównanie: {_A['label']} → {_B['label']}")
+            if _mode.startswith("Kwartał") and (len(_merged) - 1 - _merged.index(_A)) < 3:
+                st.caption("Za mało miesięcy na pełny kwartał — porównuję z najstarszym dostępnym.")
+
+            def _fmt_val(v, typ):
+                if v is None: return "—"
+                if typ == "zl": return f"{v:,.2f}".replace(",", " ").replace(".", ",") + " zł"
+                if typ == "pct": return f"{v:.1f}".replace(".", ",") + " %"
+                return f"{int(round(v)):,}".replace(",", " ")
+
+            def _fmt_delta(d, typ):
+                if d is None: return None
+                s = "+" if d >= 0 else "-"   # ASCII minus — st.metric koloruje wg znaku
+                if typ == "zl": return s + f"{abs(d):,.2f}".replace(",", " ").replace(".", ",") + " zł"
+                if typ == "pct": return s + f"{abs(d):.1f}".replace(".", ",") + " p.p."
+                return s + f"{int(round(abs(d))):,}".replace(",", " ")
+
+            # 3) Sekcja Kino — karty (wartość + zmiana)
+            st.markdown("##### Kino")
+            _cards = TREND_METRICS  # 8 metryk
+            _ncol = 4
+            for _i in range(0, len(_cards), _ncol):
+                _cols = st.columns(_ncol)
+                for _col, (_k, _lab, _typ) in zip(_cols, _cards[_i:_i + _ncol]):
+                    _vb = _B["cinema"].get(_k)
+                    _va = _A["cinema"].get(_k)
+                    _d = (_vb - _va) if (_vb is not None and _va is not None) else None
+                    with _col:
+                        st.metric(_lab, _fmt_val(_vb, _typ), _fmt_delta(_d, _typ))
+            if any(not p.get("full_month", True) for p in (_A, _B)):
+                st.caption("⚠️ Uwaga: co najmniej jeden okres jest niepełny — „Liczba transakcji” "
+                           "nie jest wprost porównywalna.")
+
+            # 4) Trajektoria kina (bez liczby transakcji — wolumen zaburzają pół-miesiące)
+            _tr_rows = []
+            for _p in _merged:
+                for _k, _lab, _typ in TREND_METRICS:
+                    if _k == "tx_count":
+                        continue
+                    _v = _p["cinema"].get(_k)
+                    if _v is not None:
+                        _tr_rows.append({"okres": _p["period_key"], "Miesiąc": _p["label"],
+                                         "Wskaźnik": _lab, "Wartość": _v})
+            if _tr_rows:
+                st.markdown("##### Trajektoria wskaźników kina")
+                _td = pd.DataFrame(_tr_rows)
+                _basetr = alt.Chart(_td).mark_line(point=True, color="#2a78d6").encode(
+                    x=alt.X("okres:N", title=None, axis=alt.Axis(labelAngle=-40)),
+                    y=alt.Y("Wartość:Q", title=None),
+                    tooltip=[alt.Tooltip("Miesiąc:N"), alt.Tooltip("Wskaźnik:N"),
+                             alt.Tooltip("Wartość:Q", format=".1f")],
+                ).properties(width=210, height=140)
+                _chart = _basetr.facet(facet=alt.Facet("Wskaźnik:N", title=None,
+                                                       header=alt.Header(labelFontSize=13)),
+                                       columns=3).resolve_scale(y="independent")
+                st.altair_chart(_chart, use_container_width=True)
+
+            # 5) Sekcja Ruchy — kto wzrósł / spadł
+            st.markdown("##### Kto się ruszył")
+            _mk_labels = [lab for _, lab, _ in TREND_METRICS]
+            _sel_lab = st.selectbox("Wskaźnik", options=_mk_labels, index=0, key="trend_move_metric")
+            _sel = next((k, t) for k, lab, t in TREND_METRICS if lab == _sel_lab)
+            _mkey, _mtyp = _sel
+            _min_tx = st.slider("Minimalna liczba transakcji w OBU okresach (odcina szum)",
+                                0, 200, 30, 10, key="trend_min_tx")
+
+            _pa, _pb = _A["people"], _B["people"]
+            _both = sorted(set(_pa) & set(_pb))
+            _rows = []
+            for _person in _both:
+                _va = _pa[_person].get(_mkey); _vb = _pb[_person].get(_mkey)
+                if _va is None or _vb is None:
+                    continue
+                if _mkey != "tx_count":
+                    _ta = _pa[_person].get("tx_count"); _tb = _pb[_person].get("tx_count")
+                    if _ta is None or _tb is None or _ta < _min_tx or _tb < _min_tx:
+                        continue
+                _rows.append({"Zleceniobiorca": _person, _A["label"]: _va,
+                              _B["label"]: _vb, "Δ": round(_vb - _va, 3)})
+
+            if not _rows:
+                st.info("Brak osób spełniających próg w obu okresach. Zmniejsz minimalną liczbę transakcji.")
+            else:
+                _mv = pd.DataFrame(_rows)
+
+                def _style_move(dfin, ascending):
+                    _d = dfin.sort_values("Δ", ascending=ascending).head(12).copy()
+
+                    def _fv(v): return _fmt_val(v, _mtyp)
+                    def _fd(v):
+                        if pd.isna(v): return ""
+                        s = "+" if v >= 0 else "−"
+                        if _mtyp == "zl": return s + f"{abs(v):,.2f}".replace(",", " ").replace(".", ",") + " zł"
+                        if _mtyp == "pct": return s + f"{abs(v):.1f}".replace(".", ",") + " p.p."
+                        return s + f"{int(round(abs(v))):,}".replace(",", " ")
+                    def _color(v):
+                        try:
+                            return ("background-color:#dcfce7;color:#065f46;font-weight:600" if v > 0
+                                    else "background-color:#fee2e2;color:#7f1d1d;font-weight:600" if v < 0 else "")
+                        except Exception:
+                            return ""
+                    _sty = _d.style.map(_color, subset=["Δ"]).format(
+                        {_A["label"]: _fv, _B["label"]: _fv, "Δ": _fd})
+                    return _sty
+
+                _c1, _c2 = st.columns(2)
+                with _c1:
+                    st.markdown("**Największe spadki** — kandydaci do rozmowy")
+                    st.dataframe(_style_move(_mv, ascending=True), use_container_width=True, hide_index=True)
+                with _c2:
+                    st.markdown("**Największe wzrosty** — warto docenić")
+                    st.dataframe(_style_move(_mv, ascending=False), use_container_width=True, hide_index=True)
+                st.caption(f"Porównano {len(_rows)} osób obecnych w obu okresach. "
+                           "Pojedynczy skok m/m bywa szumem — trajektoria z 3+ miesięcy jest pewniejsza.")
+
+            # Rotacja: nowi / odeszli — jawnie, nie po cichu
+            _only_a = sorted(set(_pa) - set(_pb))
+            _only_b = sorted(set(_pb) - set(_pa))
+            _r1, _r2 = st.columns(2)
+            with _r1:
+                with st.expander(f"Nowi w {_B['label']} (tylko nowszy okres): {len(_only_b)}"):
+                    st.write("\n".join(f"- {n}" for n in _only_b) or "—")
+            with _r2:
+                with st.expander(f"Nieobecni w {_B['label']} (byli w {_A['label']}): {len(_only_a)}"):
+                    st.write("\n".join(f"- {n}" for n in _only_a) or "—")
 
 
 # ---------- Zakładka: Kreator Konkursów ----------
