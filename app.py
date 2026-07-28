@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.24"
+APP_VERSION = "2026.07.25"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -328,6 +328,79 @@ BULK_LABELS = {
 }
 BULK_NORM = set(_norm_key(x) for x in BULK_LABELS.values())
 
+# =============== DIAGNOSTYKA PRODUKTÓW ===============
+# Rejestr wszystkich produktów uczestniczących w JAKIMKOLWIEK wskaźniku, z etykietą
+# kategorii. Służy do wykrywania dryfu list produktowych (np. pojawienie się BANANa,
+# zniknięcie MAXI+). UWAGA: to tylko sygnał ostrzegawczy dla człowieka — do samych
+# obliczeń wskaźników nadal używamy wyłącznie dokładnego dopasowania.
+TRACKED_PRODUCTS = (
+    [(p, "smak popcornu") for p in FLAVORED_LIST]
+    + [(p, "kubek popcorn") for p in BASE_POP_LIST]
+    + [(p, "zestaw") for p in SETS_LIST]
+    + [(p, "tacka nachos") for p in NACHOS_BASE_LIST]
+    + [(p, "chipsy") for p in CHIPS_LIST]
+    + [("ExtraNachosSauce", "sos do nachos"), ("NachosSerowe", "nachos serowe")]
+    + [(p, "produkt luzem") for p in BULK_LABELS.values()]
+)
+MAPPED_ALL_NORM = set(_norm_key(p) for p, _ in TRACKED_PRODUCTS)
+
+# Cena posypki (smaku) jest stała — to płaska dopłata. Smaki wyróżniają się tą ceną,
+# co pozwala wykryć nowy smak (jak BANAN) bez zgadywania po nazwie.
+FLAVOR_PRICE = 5.00
+
+def product_diagnostics(bar: pd.DataFrame):
+    """Zwraca trzy listy diagnostyczne dla ramki barowej (bez CAF/VIP):
+    - gone:   produkty z rejestru bez sprzedaży w tym okresie (możliwe wycofanie/rename)
+    - flav:   kandydaci na NOWY smak (cena == FLAVOR_PRICE, niezmapowani, nie kończą się '+')
+    - base:   kandydaci na nowy kubek/tackę (wzorzec KubekPopcorn*/TackaNachos* poza listą)
+    """
+    if bar is None or bar.empty or "ProductName" not in bar.columns:
+        return [], pd.DataFrame(columns=["ProductName", "szt"]), pd.DataFrame(columns=["ProductName", "szt"])
+    d = bar.copy()
+    d["__pn"] = d["ProductName"].map(_norm_key)
+    d["__q"] = pd.to_numeric(d.get("Quantity"), errors="coerce").fillna(0)
+    d["__pr"] = pd.to_numeric(d.get("Price"), errors="coerce")
+    present = set(d.loc[d["__q"] > 0, "__pn"])
+    g = (d.groupby("ProductName")
+           .agg(pn=("__pn", "first"), szt=("__q", "sum"), pr=("__pr", "median"))
+           .reset_index())
+
+    gone = [(nm, lab) for nm, lab in TRACKED_PRODUCTS if _norm_key(nm) not in present]
+
+    flav = g[(g["pr"] == FLAVOR_PRICE)
+             & (~g["pn"].isin(MAPPED_ALL_NORM))
+             & (~g["ProductName"].astype(str).str.strip().str.endswith("+"))]
+    flav = flav.sort_values("szt", ascending=False)[["ProductName", "szt"]]
+
+    cups = g[g["pn"].str.startswith("kubekpopcorn") & (~g["pn"].isin(BASE_POP_NORM))]
+    trays = g[g["pn"].str.startswith("tackanachos") & (~g["pn"].isin(NACHOS_BASE_NORM))]
+    base = pd.concat([cups, trays]).sort_values("szt", ascending=False)[["ProductName", "szt"]]
+    return gone, flav, base
+
+
+# --- Filtry POS (współdzielone przez zakładki i diagnostykę) ---
+def _exclude_caf_vip(df: pd.DataFrame) -> pd.DataFrame:
+    """Usuwa wiersze z PosName zawierającym CAF lub VIP (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
+        return df.loc[~m].copy()
+    return df.copy()
+
+def _keep_caf(df: pd.DataFrame) -> pd.DataFrame:
+    """Zostawia tylko wiersze z PosName zawierającym CAF (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("CAF", case=False, regex=True, na=False)
+        return df.loc[m].copy()
+    return df.iloc[0:0].copy()
+
+def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
+    """Zostawia tylko wiersze z PosName zawierającym VIP (dowolne kino)."""
+    if "PosName" in df.columns:
+        m = df["PosName"].astype(str).str.contains("VIP", case=False, regex=True, na=False)
+        return df.loc[m].copy()
+    return df.iloc[0:0].copy()
+
+
 # =============== TABS (podstrony) ===============
 tab_dane, tab_pivot, tab_indy, tab_best, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["Dane", "Wskaźniki", "Zleceniobiorca", "Najlepsi", "Konkursy", "Cafe", "VIP", "Proporcje"])
 
@@ -364,6 +437,49 @@ with tab_dane:
         st.success(f"Wczytano {len(df):,} wierszy.".replace(",", " "))
         st.dataframe(df.head(300), use_container_width=True)
 
+        # --- Diagnostyka produktów: dryf list (nowe smaki / zniknięcia) ---
+        with st.expander("🔎 Diagnostyka produktów — czy listy są aktualne?", expanded=False):
+            st.caption("Sprawdza, czy w danych nie pojawił się produkt, którego wskaźniki nie liczą "
+                       "(np. nowy smak jak BANAN), albo czy produkt z listy nie zniknął (jak MAXI+). "
+                       "To sygnał do przejrzenia — nie zmienia obliczeń.")
+            try:
+                _bar_diag = _exclude_caf_vip(df)
+                _gone, _flav, _base = product_diagnostics(_bar_diag)
+
+                st.markdown("**Możliwe nowe smaki popcornu** — sprzedawane po "
+                            f"{FLAVOR_PRICE:.2f} zł, a nie ma ich na liście smaków")
+                if _flav.empty:
+                    st.success("Brak — żaden produkt w cenie posypki nie wypada poza listę smaków.")
+                else:
+                    _f = _flav.rename(columns={"ProductName": "Produkt", "szt": "Sztuki"}).copy()
+                    _f["Sztuki"] = _f["Sztuki"].round(0).astype(int)
+                    st.dataframe(_f, use_container_width=True, hide_index=True)
+                    st.caption("Jeśli któryś to faktycznie smak popcornu — dopisz go do FLAVORED_LIST "
+                               "w kodzie. Uwaga: nie każdy produkt za 5 zł to smak (np. BubbleTea).")
+
+                st.markdown("**Możliwe nowe kubki popcornu / tacki nachos** — pasują wzorcem, "
+                            "a nie ma ich na liście (te wpływają na mianowniki wskaźników)")
+                if _base.empty:
+                    st.success("Brak — wszystkie kubki i tacki w danych są uwzględnione.")
+                else:
+                    _b = _base.rename(columns={"ProductName": "Produkt", "szt": "Sztuki"}).copy()
+                    _b["Sztuki"] = _b["Sztuki"].round(0).astype(int)
+                    st.dataframe(_b, use_container_width=True, hide_index=True)
+                    st.warning("To wpływa na mianowniki (% Popcorny, ShareCorn, Zestawy, Extra Sos, "
+                               "Nachos Serowe) — warto uzupełnić listę.")
+
+                st.markdown("**Produkty z list bez sprzedaży w tym okresie** — sprawdź, czy nie "
+                            "zostały wycofane albo przemianowane")
+                if not _gone:
+                    st.success("Brak — wszystkie śledzone produkty miały sprzedaż.")
+                else:
+                    _gdf = pd.DataFrame(_gone, columns=["Produkt", "Kategoria"])
+                    st.dataframe(_gdf, use_container_width=True, hide_index=True)
+                    st.caption("Produkt sezonowy lub sprzedawany tylko w innych kinach pojawi się tu "
+                               "naturalnie — to lista do przejrzenia, nie błąd.")
+            except Exception as _diag_ex:
+                st.warning(f"Nie udało się uruchomić diagnostyki produktów: {_diag_ex}")
+
 def ensure_data_or_stop():
     df = st.session_state.get("cached_df", pd.DataFrame())
     if df.empty:
@@ -373,26 +489,7 @@ def ensure_data_or_stop():
 
 
 # ---------- POS helpers (CAF/VIP) ----------
-def _exclude_caf_vip(df: pd.DataFrame) -> pd.DataFrame:
-    """Usuwa wiersze z PosName zawierającym CAF lub VIP (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("CAF|VIP", case=False, regex=True, na=False)
-        return df.loc[~m].copy()
-    return df.copy()
 
-def _keep_caf(df: pd.DataFrame) -> pd.DataFrame:
-    """Zostawia tylko wiersze z PosName zawierającym CAF (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("CAF", case=False, regex=True, na=False)
-        return df.loc[m].copy()
-    return df.iloc[0:0].copy()
-
-def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
-    """Zostawia tylko wiersze z PosName zawierającym VIP (dowolne kino)."""
-    if "PosName" in df.columns:
-        m = df["PosName"].astype(str).str.contains("VIP", case=False, regex=True, na=False)
-        return df.loc[m].copy()
-    return df.iloc[0:0].copy()
 
 
 def _keep_bo(df: pd.DataFrame) -> pd.DataFrame:
