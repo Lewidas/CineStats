@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.26"
+APP_VERSION = "2026.07.27"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -1998,6 +1998,50 @@ with tab_trends:
             with _r2:
                 with st.expander(f"Nieobecni w {_B['label']} (byli w {_A['label']}): {len(_only_a)}"):
                     st.write("\n".join(f"- {n}" for n in _only_a) or "—")
+
+            # 6) Trajektoria pojedynczej osoby — jej wskaźniki w czasie vs średnia kina
+            st.markdown("##### Trajektoria osoby")
+            _people_all = sorted(set().union(*[set(p["people"]) for p in _merged])) if _merged else []
+            if not _people_all:
+                st.info("Brak osób w historii.")
+            else:
+                _psel = st.selectbox("Zleceniobiorca", options=_people_all, index=0, key="trend_person")
+                _prows = []
+                for _p in _merged:
+                    for _k, _lab, _typ in TREND_METRICS:
+                        if _k == "tx_count":
+                            continue
+                        _pv = _p["people"].get(_psel, {}).get(_k)
+                        if _pv is not None:
+                            _prows.append({"okres": _p["period_key"], "Wskaźnik": _lab,
+                                           "Wartość": _pv, "Kto": _psel})
+                        _cv = _p["cinema"].get(_k)
+                        if _cv is not None:
+                            _prows.append({"okres": _p["period_key"], "Wskaźnik": _lab,
+                                           "Wartość": _cv, "Kto": "Średnia kina"})
+                if not _prows:
+                    st.info("Brak danych dla wybranej osoby.")
+                else:
+                    _ppdf = pd.DataFrame(_prows)
+                    _pchart = alt.Chart(_ppdf).mark_line(point=True).encode(
+                        x=alt.X("okres:N", title=None, axis=alt.Axis(labelAngle=-40)),
+                        y=alt.Y("Wartość:Q", title=None),
+                        color=alt.Color("Kto:N",
+                                        scale=alt.Scale(domain=[_psel, "Średnia kina"],
+                                                        range=["#2a78d6", "#9a988f"]),
+                                        legend=alt.Legend(title=None, orient="top")),
+                        strokeDash=alt.StrokeDash("Kto:N",
+                                                  scale=alt.Scale(domain=[_psel, "Średnia kina"],
+                                                                  range=[[1, 0], [5, 4]]), legend=None),
+                        tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wskaźnik:N"),
+                                 alt.Tooltip("Wartość:Q", format=".1f")],
+                    ).properties(width=210, height=140).facet(
+                        facet=alt.Facet("Wskaźnik:N", title=None, header=alt.Header(labelFontSize=13)),
+                        columns=3).resolve_scale(y="independent")
+                    st.altair_chart(_pchart, use_container_width=True)
+                    _pcount = sum(1 for _p in _merged if _psel in _p["people"])
+                    st.caption("Ciągła linia = wybrana osoba · przerywana = średnia kina. "
+                               f"Osoba obecna w {_pcount} z {len(_merged)} miesięcy.")
 
 
 # ---------- Zakładka: Kreator Konkursów ----------
