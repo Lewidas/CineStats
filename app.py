@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.28"
+APP_VERSION = "2026.07.29"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -401,6 +401,27 @@ def _keep_vip(df: pd.DataFrame) -> pd.DataFrame:
     return df.iloc[0:0].copy()
 
 
+# --- Odczyt/scalanie historii (potrzebne już w zakładce Dane, więc przed sekcją zakładek) ---
+def read_snapshot_bytes(raw_bytes) -> list:
+    """Parsuje wgrany plik snapshotu/historii → lista okresów. Rzuca ValueError, jeśli to nie snapshot."""
+    obj = json.loads(raw_bytes.decode("utf-8") if isinstance(raw_bytes, (bytes, bytearray)) else raw_bytes)
+    if not isinstance(obj, dict) or not obj.get("cinestats_snapshot"):
+        raise ValueError("To nie jest plik snapshotu CineStats.")
+    return [p for p in obj.get("periods", []) if isinstance(p, dict) and p.get("period_key")]
+
+def merge_periods(periods: list) -> list:
+    """Dedup po period_key (nowszy 'generated' wygrywa), posortowane rosnąco po kluczu."""
+    by_key = {}
+    for p in periods:
+        k = p.get("period_key")
+        if not k:
+            continue
+        prev = by_key.get(k)
+        if prev is None or str(p.get("generated", "")) >= str(prev.get("generated", "")):
+            by_key[k] = p
+    return [by_key[k] for k in sorted(by_key)]
+
+
 # =============== TABS (podstrony) ===============
 tab_dane, tab_pivot, tab_indy, tab_best, tab_trends, tab_comp, tab_cafe, tab_vip, tab_props = st.tabs(["Dane", "Wskaźniki", "Zleceniobiorca", "Najlepsi", "Trendy", "Konkursy", "Cafe", "VIP", "Proporcje"])
 
@@ -429,6 +450,23 @@ with tab_dane:
             save_config(data_dir=data_dir)
             with st.spinner("Wczytywanie danych..."):
                 st.session_state["cached_df"] = add__date_column(load_all_data_from_dir(data_dir))
+
+    # --- Historia wyników (JSON) — JEDNO miejsce; zasila zakładki Trendy i Zleceniobiorca ---
+    st.markdown("**Historia wyników (opcjonalnie — do trendów)**")
+    _dane_hist = st.file_uploader("Wgraj plik historii / snapshoty (JSON). Trendy pojawią się w zakładkach "
+                                  "„Trendy” i „Zleceniobiorca”.", type=["json"],
+                                  accept_multiple_files=True, key="dane_hist")
+    _dane_hist_periods = []
+    for _dhf in (_dane_hist or []):
+        try:
+            _dane_hist_periods += read_snapshot_bytes(_dhf.read())
+        except Exception as _dhe:
+            st.warning(f"Pominięto „{_dhf.name}”: {_dhe}")
+    # Dane to jedyne źródło historii — nadpisujemy stan (usunięcie pliku = brak trendów wszędzie)
+    st.session_state["shared_hist"] = _dane_hist_periods
+    if _dane_hist_periods:
+        _dhp = merge_periods(_dane_hist_periods)
+        st.caption("Wczytano historię: " + ", ".join(p["label"] for p in _dhp) + f" ({len(_dhp)} mies.).")
 
     df = st.session_state.get("cached_df", pd.DataFrame())
     if df.empty:
@@ -676,25 +714,6 @@ def build_current_period(df: pd.DataFrame) -> dict:
         "app_version": APP_VERSION, "rows": int(len(df)), "n_bo": int(len(pu)),
         "cinema": cinema, "people": people,
     }
-
-def read_snapshot_bytes(raw_bytes) -> list:
-    """Parsuje wgrany plik snapshotu/historii → lista okresów. Rzuca ValueError, jeśli to nie snapshot."""
-    obj = json.loads(raw_bytes.decode("utf-8") if isinstance(raw_bytes, (bytes, bytearray)) else raw_bytes)
-    if not isinstance(obj, dict) or not obj.get("cinestats_snapshot"):
-        raise ValueError("To nie jest plik snapshotu CineStats.")
-    return [p for p in obj.get("periods", []) if isinstance(p, dict) and p.get("period_key")]
-
-def merge_periods(periods: list) -> list:
-    """Dedup po period_key (nowszy 'generated' wygrywa), posortowane rosnąco po kluczu."""
-    by_key = {}
-    for p in periods:
-        k = p.get("period_key")
-        if not k:
-            continue
-        prev = by_key.get(k)
-        if prev is None or str(p.get("generated", "")) >= str(prev.get("generated", "")):
-            by_key[k] = p
-    return [by_key[k] for k in sorted(by_key)]
 
 def history_json(periods: list) -> str:
     return json.dumps({"cinestats_snapshot": True, "schema": SNAPSHOT_SCHEMA, "periods": periods},
@@ -1600,22 +1619,12 @@ with tab_indy:
     except Exception as ex:
         st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
 
-    # ============ Trend w czasie (opcjonalnie — pojawia się po wgraniu historii) ============
+    # ============ Trend w czasie (pojawia się po wgraniu historii w zakładce Dane) ============
     st.divider()
     st.markdown("### 📈 Trend w czasie")
-    st.caption("Pokaże zmiany wskaźników tej osoby w czasie — jeśli wgrasz plik historii (JSON). "
-               "Bieżący miesiąc dokładany jest automatycznie. Historię możesz też wgrać w zakładce Trendy.")
-    _indy_hist_files = st.file_uploader("Historia (JSON)", type=["json"],
-                                        accept_multiple_files=True, key="indy_hist")
-    _indy_file_periods = []
-    for _ihf in (_indy_hist_files or []):
-        try:
-            _indy_file_periods += read_snapshot_bytes(_ihf.read())
-        except Exception as _ihe:
-            st.warning(f"Pominięto „{_ihf.name}”: {_ihe}")
-    if _indy_file_periods:
-        st.session_state["shared_hist"] = _indy_file_periods
-    _hist_periods = _indy_file_periods or list(st.session_state.get("shared_hist", []))
+    st.caption("Pokaże zmiany wskaźników tej osoby w czasie — jeśli w zakładce **Dane** wgrasz plik "
+               "historii (JSON). Bieżący miesiąc dokładany jest automatycznie.")
+    _hist_periods = list(st.session_state.get("shared_hist", []))
     _has_history = bool(_hist_periods)
 
     # Zbuduj trajektorię: historia z pliku + bieżący miesiąc (spójny z raportem: z df_all)
@@ -1644,7 +1653,7 @@ with tab_indy:
         return (_labels, tuple(_metrics)) if _metrics else ()
 
     if not _has_history:
-        st.info("Brak historii — wgraj plik JSON powyżej, aby zobaczyć trend tej osoby "
+        st.info("Brak historii — wgraj plik JSON w zakładce **Dane**, aby zobaczyć trend tej osoby "
                 "(i dołączyć te wykresy do raportu PDF).")
     elif len(_traj_periods) < 2:
         st.info(f"Historia ma za mało miesięcy do trendu (potrzeba ≥2, jest {len(_traj_periods)}).")
@@ -1973,24 +1982,11 @@ with tab_best:
 with tab_trends:
     st.subheader("Trendy — zmiany miesiąc do miesiąca")
     st.caption("Porównuje zagregowane wyniki miesięcy z lekkiego pliku historii — nie ładuje "
-               "surowych danych wielu miesięcy. Pętla: wgraj historię, dołącz bieżący miesiąc, "
-               "pobierz zaktualizowaną historię.")
+               "surowych danych wielu miesięcy. Historię wgrywasz w zakładce **Dane**; tu dokładasz "
+               "bieżący miesiąc i pobierasz zaktualizowaną historię.")
 
-    # 1) Wczytanie historii + bieżącego miesiąca
-    _hist_files = st.file_uploader("Wgraj historię / snapshoty (JSON)", type=["json"],
-                                   accept_multiple_files=True, key="trend_hist")
-    _periods = []
-    for _hf in (_hist_files or []):
-        try:
-            _periods += read_snapshot_bytes(_hf.read())
-        except Exception as _he:
-            st.warning(f"Pominięto „{_hf.name}”: {_he}")
-    # udostępnij historię z pliku innym zakładkom (Zleceniobiorca); jeśli tu nie wgrano,
-    # skorzystaj z tego, co wgrano gdzie indziej
-    if _periods:
-        st.session_state["shared_hist"] = _periods
-    elif st.session_state.get("shared_hist"):
-        _periods = list(st.session_state["shared_hist"])
+    # 1) Historia z zakładki Dane + bieżący miesiąc
+    _periods = list(st.session_state.get("shared_hist", []))
 
     _cur_df = st.session_state.get("cached_df", pd.DataFrame())
     _has_cur = not _cur_df.empty
@@ -2009,7 +2005,7 @@ with tab_trends:
     _merged = merge_periods(_periods)
 
     if not _merged:
-        st.info("Wgraj plik historii albo wczytaj miesiąc w zakładce **Dane** i zaznacz „Dołącz "
+        st.info("Wgraj plik historii w zakładce **Dane** albo wczytaj miesiąc i zaznacz „Dołącz "
                 "obecnie wczytany miesiąc”.")
     else:
         _names = ", ".join(p["label"] for p in _merged)
