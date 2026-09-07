@@ -23,7 +23,7 @@ import altair as alt
 # Znacznik wersji — widoczny w zakładce "Dane" i w stopce raportu PDF.
 # Dzięki niemu od razu widać, która wersja pliku jest faktycznie wdrożona
 # (bez tego łatwo pomylić starszy deploy z błędem w kodzie).
-APP_VERSION = "2026.07.27"
+APP_VERSION = "2026.07.28"
 
 st.set_page_config(page_title="CineStats — sprzedaż i wskaźniki", layout="wide")
 
@@ -868,7 +868,56 @@ def _pdf_share_bar_png(items, val_title="Sztuki"):
     buf.seek(0)
     return buf
 
-def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
+def _pdf_person_trajectory_png(traj):
+    """Trajektoria osoby do PDF: małe wykresy (osoba vs średnia kina) w czasie.
+    traj = {"periods":[etykiety], "metrics":[{"label","person":[...],"cinema":[...]}]}.
+    Ciągła linia = osoba, przerywana = kino. Zwraca BytesIO albo None."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager as fm
+    from matplotlib.lines import Line2D
+    periods = traj.get("periods") or []
+    metrics = [m for m in (traj.get("metrics") or []) if any(v is not None for v in m.get("person", []))]
+    if len(periods) < 2 or not metrics:
+        return None
+    ttf = os.path.join(os.path.dirname(fm.__file__), "mpl-data", "fonts", "ttf")
+    prop = fm.FontProperties(fname=os.path.join(ttf, "DejaVuSans.ttf"))
+    propb = fm.FontProperties(fname=os.path.join(ttf, "DejaVuSans-Bold.ttf"))
+    person_c, cinema_c, ink = "#2a78d6", "#9a988f", "#1C1B1A"
+    n = len(metrics); ncol = min(3, n); nrow = math.ceil(n / ncol)
+    x = list(range(len(periods)))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(2.25 * ncol, 1.7 * nrow + 0.35), dpi=200, squeeze=False)
+    for idx, m in enumerate(metrics):
+        ax = axes[idx // ncol][idx % ncol]
+        pv = [float("nan") if v is None else float(v) for v in m.get("person", [])]
+        cv = [float("nan") if v is None else float(v) for v in m.get("cinema", [])]
+        ax.plot(x, cv, color=cinema_c, lw=1.8, ls=(0, (4, 3)), marker="o", ms=4, zorder=2)
+        ax.plot(x, pv, color=person_c, lw=2.2, marker="o", ms=5, zorder=3)
+        ax.set_title(m["label"], fontproperties=propb, fontsize=9, color=ink, pad=4)
+        ax.set_xticks(x); ax.set_xticklabels(periods, fontproperties=prop, fontsize=7, rotation=40, ha="right")
+        for yt in ax.get_yticklabels():
+            yt.set_fontproperties(prop); yt.set_fontsize(7)
+        ax.tick_params(length=0)
+        for s in ["top", "right"]:
+            ax.spines[s].set_visible(False)
+        for s in ["left", "bottom"]:
+            ax.spines[s].set_color("#cfcdc2")
+        ax.grid(axis="y", color="#ecebe4", lw=0.7, zorder=0); ax.set_axisbelow(True)
+    for j in range(n, nrow * ncol):
+        axes[j // ncol][j % ncol].axis("off")
+    leg = [Line2D([0], [0], color=person_c, lw=2.2, marker="o", label="wybrana osoba"),
+           Line2D([0], [0], color=cinema_c, lw=1.8, ls=(0, (4, 3)), marker="o", label="średnia kina")]
+    fig.legend(handles=leg, loc="upper left", ncol=2, frameon=False, prop=prop, fontsize=8,
+               bbox_to_anchor=(0.01, 1.0))
+    fig.tight_layout(rect=[0, 0, 1, 0.94], pad=0.5)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None, trajectory=None):
     """Buduje raport PDF (bytes) dla jednej osoby.
     rows: [[label, uval, cval], ...]  (label 'Średnia wartość...' => zł, inaczej %)
     tx_counts: {'bar':int|None, 'cafe':..., 'vip':...}
@@ -1020,6 +1069,21 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
             story.append(Spacer(1, 6))
             story.append(RLImage(_sb, width=_w, height=_h))
 
+    # Trend w czasie — tylko gdy dostarczono dane trajektorii (wgrana historia)
+    if trajectory:
+        try:
+            _tr = _pdf_person_trajectory_png(trajectory)
+        except Exception:
+            _tr = None
+        if _tr is not None:
+            from reportlab.lib.utils import ImageReader as _IRT
+            story.append(Spacer(1, 12))
+            story.append(Paragraph("Trend w czasie (na tle średniej kina)", st_h))
+            _iw2, _ih2 = _IRT(_tr).getSize()
+            _w2 = doc.width; _h2 = _w2 * _ih2 / _iw2
+            story.append(RLImage(_tr, width=_w2, height=_h2))
+            story.append(Paragraph("Ciągła linia = wybrana osoba · przerywana = średnia kina.", st_tag))
+
     story.append(Spacer(1, 16))
     story.append(Paragraph(
         "Dane poufne — wyłącznie do wiadomości adresata. "
@@ -1029,12 +1093,18 @@ def build_person_pdf(sel_user, period, rows, tx_counts, sets_rows=None):
     return buf.getvalue()
 
 @st.cache_data(show_spinner=False)
-def cached_person_pdf(sel_user, period, rows_tuple, tx_tuple, sets_tuple):
+def cached_person_pdf(sel_user, period, rows_tuple, tx_tuple, sets_tuple, traj_tuple=()):
     """Cache po (osoba, okres, dane) — ten sam wybór nie generuje PDF ponownie przy rerunie."""
     rows = [list(r) for r in rows_tuple]
     tx = {"bar": tx_tuple[0], "cafe": tx_tuple[1], "vip": tx_tuple[2]}
     sets_rows = [{"Zestaw": s[0], "Sztuki": s[1], "Udział (%)": s[2]} for s in sets_tuple]
-    return build_person_pdf(sel_user, period, rows, tx, sets_rows)
+    trajectory = None
+    if traj_tuple:
+        _periods, _metrics = traj_tuple
+        trajectory = {"periods": list(_periods),
+                      "metrics": [{"label": m[0], "person": list(m[1]), "cinema": list(m[2])}
+                                  for m in _metrics]}
+    return build_person_pdf(sel_user, period, rows, tx, sets_rows, trajectory=trajectory)
 
 
 # ================= LISTA MAILINGOWA (pod Power Automate) =================
@@ -1530,6 +1600,88 @@ with tab_indy:
     except Exception as ex:
         st.warning(f"Nie udało się przygotować 'Struktura sprzedaży — zestawy (osoba)': {ex}")
 
+    # ============ Trend w czasie (opcjonalnie — pojawia się po wgraniu historii) ============
+    st.divider()
+    st.markdown("### 📈 Trend w czasie")
+    st.caption("Pokaże zmiany wskaźników tej osoby w czasie — jeśli wgrasz plik historii (JSON). "
+               "Bieżący miesiąc dokładany jest automatycznie. Historię możesz też wgrać w zakładce Trendy.")
+    _indy_hist_files = st.file_uploader("Historia (JSON)", type=["json"],
+                                        accept_multiple_files=True, key="indy_hist")
+    _indy_file_periods = []
+    for _ihf in (_indy_hist_files or []):
+        try:
+            _indy_file_periods += read_snapshot_bytes(_ihf.read())
+        except Exception as _ihe:
+            st.warning(f"Pominięto „{_ihf.name}”: {_ihe}")
+    if _indy_file_periods:
+        st.session_state["shared_hist"] = _indy_file_periods
+    _hist_periods = _indy_file_periods or list(st.session_state.get("shared_hist", []))
+    _has_history = bool(_hist_periods)
+
+    # Zbuduj trajektorię: historia z pliku + bieżący miesiąc (spójny z raportem: z df_all)
+    _traj_periods = []
+    if _has_history:
+        try:
+            _cur_p = build_current_period(df_all)
+            _traj_periods = merge_periods(_hist_periods + ([_cur_p] if _cur_p.get("period_key") else []))
+        except Exception as _te:
+            st.warning(f"Nie udało się złożyć trendu: {_te}")
+            _traj_periods = merge_periods(_hist_periods)
+
+    def _traj_tuple_for(person):
+        """Hashowalna struktura trajektorii osoby dla PDF ((), gdy brak historii/za mało danych)."""
+        if not _has_history or len(_traj_periods) < 2:
+            return ()
+        _labels = tuple(p["period_key"] for p in _traj_periods)
+        _metrics = []
+        for _k, _lab, _typ in TREND_METRICS:
+            if _k == "tx_count":
+                continue
+            _pv = tuple(p["people"].get(person, {}).get(_k) for p in _traj_periods)
+            _cv = tuple(p["cinema"].get(_k) for p in _traj_periods)
+            if any(v is not None for v in _pv):
+                _metrics.append((_lab, _pv, _cv))
+        return (_labels, tuple(_metrics)) if _metrics else ()
+
+    if not _has_history:
+        st.info("Brak historii — wgraj plik JSON powyżej, aby zobaczyć trend tej osoby "
+                "(i dołączyć te wykresy do raportu PDF).")
+    elif len(_traj_periods) < 2:
+        st.info(f"Historia ma za mało miesięcy do trendu (potrzeba ≥2, jest {len(_traj_periods)}).")
+    else:
+        _pt_rows = []
+        for _p in _traj_periods:
+            for _k, _lab, _typ in TREND_METRICS:
+                if _k == "tx_count":
+                    continue
+                _pv = _p["people"].get(sel_user, {}).get(_k)
+                if _pv is not None:
+                    _pt_rows.append({"okres": _p["period_key"], "Wskaźnik": _lab, "Wartość": _pv, "Kto": sel_user})
+                _cv = _p["cinema"].get(_k)
+                if _cv is not None:
+                    _pt_rows.append({"okres": _p["period_key"], "Wskaźnik": _lab, "Wartość": _cv, "Kto": "Średnia kina"})
+        if not _pt_rows:
+            st.info("Brak danych trendu dla tej osoby.")
+        else:
+            _ptdf = pd.DataFrame(_pt_rows)
+            _ptchart = alt.Chart(_ptdf).mark_line(point=True).encode(
+                x=alt.X("okres:N", title=None, axis=alt.Axis(labelAngle=-40)),
+                y=alt.Y("Wartość:Q", title=None),
+                color=alt.Color("Kto:N", scale=alt.Scale(domain=[sel_user, "Średnia kina"],
+                                                          range=["#2a78d6", "#9a988f"]),
+                                legend=alt.Legend(title=None, orient="top")),
+                strokeDash=alt.StrokeDash("Kto:N", scale=alt.Scale(domain=[sel_user, "Średnia kina"],
+                                                                   range=[[1, 0], [5, 4]]), legend=None),
+                tooltip=[alt.Tooltip("Kto:N"), alt.Tooltip("Wskaźnik:N"), alt.Tooltip("Wartość:Q", format=".1f")],
+            ).properties(width=210, height=140).facet(
+                facet=alt.Facet("Wskaźnik:N", title=None, header=alt.Header(labelFontSize=13)),
+                columns=3).resolve_scale(y="independent")
+            st.altair_chart(_ptchart, use_container_width=True)
+            _ptcount = sum(1 for _p in _traj_periods if sel_user in _p["people"])
+            st.caption("Ciągła linia = ta osoba · przerywana = średnia kina. "
+                       f"Obecna w {_ptcount} z {len(_traj_periods)} miesięcy. "
+                       "Te wykresy trafią też do raportu PDF.")
+
     # ============ Raporty PDF — pojedynczy + hurtowy (na dole podstrony) ============
     st.divider()
     st.markdown("### 📄 Raporty PDF")
@@ -1666,7 +1818,8 @@ with tab_indy:
         if sel_user is not None and sel_user in pu.index:
             try:
                 _pdf1 = cached_person_pdf(sel_user, _period, _rows_for(sel_user),
-                                          _tx_tuple_for(sel_user), _sets_tuple_for(sel_user))
+                                          _tx_tuple_for(sel_user), _sets_tuple_for(sel_user),
+                                          _traj_tuple_for(sel_user))
                 st.download_button("⬇️ Pobierz PDF wybranej osoby", data=_pdf1,
                                    file_name=_fname_for(sel_user), mime="application/pdf",
                                    use_container_width=True)
@@ -1679,8 +1832,9 @@ with tab_indy:
     with _col_b:
         _all_bo = list(pu.index)
         _mail_sig = tuple(sorted(_mail_map.items())) if _mail_map else ()
-        _sig = (str(_period), tuple(_all_bo), _mail_sig)
-        # zmiana okresu / zestawu osób / listy mailingowej unieważnia wcześniejszy ZIP
+        _hist_sig = tuple(p.get("period_key") for p in _traj_periods) if _has_history else ()
+        _sig = (str(_period), tuple(_all_bo), _mail_sig, _hist_sig)
+        # zmiana okresu / zestawu osób / listy mailingowej / historii unieważnia wcześniejszy ZIP
         if st.session_state.get("indy_zip_sig") != _sig:
             st.session_state["indy_zip_bytes"] = None
         if st.button(f"📦 Przygotuj ZIP ({len(_all_bo)} raportów)", use_container_width=True,
@@ -1694,7 +1848,8 @@ with tab_indy:
                     _seen = {}
                     for _i, _p in enumerate(_all_bo):
                         _pdfb = cached_person_pdf(_p, _period, _rows_for(_p),
-                                                  _tx_tuple_for(_p), _sets_tuple_for(_p))
+                                                  _tx_tuple_for(_p), _sets_tuple_for(_p),
+                                                  _traj_tuple_for(_p))
                         _fn = _fname_for(_p)
                         if _fn in _seen:  # zabezpieczenie przed nadpisaniem (praktycznie nie wystąpi)
                             _seen[_fn] += 1; _fn = _fn[:-4] + f"_{_seen[_fn]}.pdf"
@@ -1830,6 +1985,12 @@ with tab_trends:
             _periods += read_snapshot_bytes(_hf.read())
         except Exception as _he:
             st.warning(f"Pominięto „{_hf.name}”: {_he}")
+    # udostępnij historię z pliku innym zakładkom (Zleceniobiorca); jeśli tu nie wgrano,
+    # skorzystaj z tego, co wgrano gdzie indziej
+    if _periods:
+        st.session_state["shared_hist"] = _periods
+    elif st.session_state.get("shared_hist"):
+        _periods = list(st.session_state["shared_hist"])
 
     _cur_df = st.session_state.get("cached_df", pd.DataFrame())
     _has_cur = not _cur_df.empty
